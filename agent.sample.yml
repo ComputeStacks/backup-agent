@@ -1,0 +1,73 @@
+---
+computestacks:
+  host: http://localhost:3000
+consul:
+  host: 127.0.0.1:8500
+  token: "" # Consul Auth Token
+  ##
+  # TLS Configuration
+  #
+  # If true, it will look for certificates here: /etc/computestacks/certs/consul
+  #  * ca.crt
+  #  * client.crt
+  #  * client.key
+  #
+  tls: true
+backups:
+  enabled: true
+
+  ##
+  # How often to check for new volumes
+  #    * * * * * *
+  #    | | | | | |
+  #    | | | | | +-- Year              (range: 1900-3000) (optional field)
+  #    | | | | +---- Day of the Week   (range: 0-6, 0 standing for Sunday)
+  #    | | | +------ Month of the Year (range: 1-12, 1 standing for Jan)
+  #    | | +-------- Day of the Month  (range: 1-31)
+  #    | +---------- Hour              (range: 0-23)
+  #    +------------ Minute            (range: 0-59)
+  #
+  # (optionally) Supports built-in helpers:
+  #  - @every <duration> see: https://golang.org/pkg/time/#ParseDuration
+  #  - @hourly
+  #  - @daily (or @midnight)
+  #  - @weekly
+  #  - @monthly
+  #  - @yearly (or @annually)
+  #
+  check_freq: "*/2 * * * *" # Every 2-minutes
+  prune_freq: "15 1 * * *" # Every day at 01:15
+
+  key: changeme! # This is the encryption key
+  mariadb:
+    io_throttle: 100 # IO per second during backup
+    long_queries: # Kill long queries to unblock backup
+      timeout: 20 # in seconds. Set to 0 to disable
+      query_type: SELECT # Possible values are: ALL, SELECT, UPDATE
+    lock_wait:
+      query_type: ALL # Possible values are: ALL, SELECT, UPDATE
+      timeout: 60 # In seconds, how long to wait while attempting to grab global lock.
+  borg:
+    compress: "zstd,3"
+    image: "cmptstks/borg:stable"
+
+    ##
+    # If storing backups on an NFS server
+    nfs: false # Set `true` to use nfs server to store backup volumes.
+    nfs_host: 127.0.0.1
+    nfs_host_path: "/var/nfsshare/backups"
+    nfs_opts: ",async,noatime,rsize=32768,wsize=32768" # Ensure you include the `,`! `rw,nfsvers=4` is already included
+    nfs_create_path: true # Create paths on backup server prior to mounting volume.
+
+    # Required in order to create the data directly on the NFS Server,
+    # and to clean up the data after the parent volume is destroyed.
+    nfs_ssh:
+      user: "root" # SSH key used to connect to NFS server
+      port: "22"
+      keyfile: "/root/.ssh/id_ed25519" # SSH key used to connect to NFS server
+docker:
+  version: "1.41"
+queue:
+  numworkers: 3 # Number of concurrent backup jobs to run
+sentry:
+  dsn: "" # Full sentry DSN for bug reports.

@@ -1,0 +1,13 @@
+.idea
+.DS_Store
+agent.yaml
+pkg/
+testdata
+*.log
+.vagrant
+.vscode
+*.tar.gz
+.editorconfig
+.revive.toml
+.envrc
+.richstyle
