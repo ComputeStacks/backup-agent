@@ -129,9 +129,6 @@ func backupMysql(backupContainer *containermgr.Container, mysqlMaster *MysqlInst
 	backupCmd = append(backupCmd, "--kill-long-query-type="+mariaLongType)
 	backupCmd = append(backupCmd, "--kill-long-queries-timeout="+mariaLongTimeout)
 
-	// https://jira.mariadb.org/browse/MDEV-28772?focusedCommentId=227896&page=com.atlassian.jira.plugin.system.issuetabpanels:comment-tabpanel#comment-227896
-	backupCmd = append(backupCmd, "--log-copy-interval=1")
-
 	execCmd = append(execCmd, "bash", "-c", strings.Join(backupCmd, " "))
 
 	exitCode, _, err := backupContainer.Exec(execCmd, event)
