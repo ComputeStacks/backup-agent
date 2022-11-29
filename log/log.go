@@ -7,16 +7,9 @@ import (
 
 // New builds a generic logger interface
 func New() hclog.Logger {
-	var lvl string
-	switch viper.GetString("backups.key") {
-	case "changeme!", "tester!":
-		lvl = "DEBUG"
-	default:
-		lvl = "INFO"
-	}
 	return hclog.New(&hclog.LoggerOptions{
 		Name:       "cs-agent",
-		Level:      hclog.LevelFromString(lvl),
+		Level:      hclog.LevelFromString(viper.GetString("log.level")),
 		TimeFormat: "2006/01/02 15:04:05",
 	})
 }

@@ -2,14 +2,14 @@
 
 ## 1.3.3
 
-* [FIX] Continuing to try and resolve issues with backing up MariaDB 10.9
+* [CHANGE] MariaDB will use built-in MariaBackup, rather than a separate container.
+* [FIX] Resolve MariaDB backup issues with v10.6+.
 
 ***
 
 ## 1.3.2
 
-* [CHANGE] Additional tuning parameters available for MariaBackup
-* [FIX] Resolved issues with backing up MariaDB 10.9.
+* [CHANGE] Additional tuning parameters available for MariaBackup.
 
 ***
 

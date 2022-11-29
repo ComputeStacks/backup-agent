@@ -30,14 +30,19 @@ func preBackupMysql(vol *types.Volume, event *csevent.ProjectEvent) bool {
 	We build and run the image like a normal container, rather than a "one-shot" command, so that we can re-use our existing
 	container exec code and capture logging back to CS.
 	*/
-	container, err := buildBackupAgent(cli, mysqlMaster)
+	var container *containermgr.Container
+	if mysqlMaster.Variant == "mariadb" {
+		container = mysqlMaster.Container
+	} else {
+		var err error
+		container, err = buildBackupAgent(cli, mysqlMaster)
+		defer container.Stop()
 
-	defer container.Stop()
-
-	if err != nil {
-		backupLogger().Warn("Failed to create backup container", "error", err.Error())
-		go event.PostEventUpdate("agent-45b31fb5d2814cd8", "Failed to create backup container: "+err.Error())
-		return false
+		if err != nil {
+			backupLogger().Warn("Failed to create backup container", "error", err.Error())
+			go event.PostEventUpdate("agent-45b31fb5d2814cd8", "Failed to create backup container: "+err.Error())
+			return false
+		}
 	}
 
 	isReadyResult := isMysqlReady(container, mysqlMaster, event)
@@ -104,7 +109,6 @@ func isMysqlReady(backupContainer *containermgr.Container, mysqlMaster *MysqlIns
 
 func backupMysql(backupContainer *containermgr.Container, mysqlMaster *MysqlInstance, event *csevent.ProjectEvent) bool {
 	var backupCmd []string
-	var execCmd []string
 
 	backupExec := "xtrabackup"
 
@@ -112,26 +116,25 @@ func backupMysql(backupContainer *containermgr.Container, mysqlMaster *MysqlInst
 		backupExec = "mariabackup"
 	}
 
-	mariaIoThrottle := viper.GetString("mariadb.io_throttle")
 	mariaLongTimeout := viper.GetString("mariadb.long_queries.timeout")
 	mariaLongType := viper.GetString("mariadb.long_queries.query_type")
 	mariaWaitQueryType := viper.GetString("mariadb.lock_wait.query_type")
 	mariaWaitTimeout := viper.GetString("mariadb.lock_wait.timeout")
 
-	backupCmd = append(backupCmd, backupExec, "--backup", "--datadir="+mysqlMaster.DataPath, "--port=3306") // throttle is N * 10 MB/s
+	backupCmd = append(backupCmd, backupExec, "--backup", "--datadir="+mysqlMaster.DataPath, "--port=3306")
 	backupCmd = append(backupCmd, "--target-dir="+mysqlMaster.DataPath+"/backups")
 	backupCmd = append(backupCmd, "--user="+mysqlMaster.Username)
 	backupCmd = append(backupCmd, "--password="+mysqlMaster.Password)
 	backupCmd = append(backupCmd, "--host="+mysqlMaster.IPAddress)
-	backupCmd = append(backupCmd, "--ftwrl-wait-query-type="+mariaWaitQueryType)
-	backupCmd = append(backupCmd, "--ftwrl-wait-timeout="+mariaWaitTimeout)
-	backupCmd = append(backupCmd, "--throttle="+mariaIoThrottle)
-	backupCmd = append(backupCmd, "--kill-long-query-type="+mariaLongType)
-	backupCmd = append(backupCmd, "--kill-long-queries-timeout="+mariaLongTimeout)
 
-	execCmd = append(execCmd, "bash", "-c", strings.Join(backupCmd, " "))
+	if mysqlMaster.Variant == "mariadb" {
+		backupCmd = append(backupCmd, "--ftwrl-wait-query-type="+mariaWaitQueryType)
+		backupCmd = append(backupCmd, "--ftwrl-wait-timeout="+mariaWaitTimeout)
+		backupCmd = append(backupCmd, "--kill-long-query-type="+mariaLongType)
+		backupCmd = append(backupCmd, "--kill-long-queries-timeout="+mariaLongTimeout)
+	}
 
-	exitCode, _, err := backupContainer.Exec(execCmd, event)
+	exitCode, _, err := backupContainer.Exec(backupCmd, event)
 
 	if err != nil {
 		backupLogger().Warn("Failed to run backupMysql", "error", err.Error())
@@ -150,7 +153,6 @@ func backupMysql(backupContainer *containermgr.Container, mysqlMaster *MysqlInst
 
 func prepareMysqlBackup(backupContainer *containermgr.Container, mysqlMaster *MysqlInstance, event *csevent.ProjectEvent) bool {
 	var backupPrepareCmd []string
-	var execCmd []string
 
 	backupExec := "xtrabackup"
 
@@ -159,9 +161,8 @@ func prepareMysqlBackup(backupContainer *containermgr.Container, mysqlMaster *My
 	}
 
 	backupPrepareCmd = append(backupPrepareCmd, backupExec, "--prepare", "--target-dir="+mysqlMaster.DataPath+"/backups")
-	execCmd = append(execCmd, "bash", "-c", strings.Join(backupPrepareCmd, " "))
 
-	exitCode, _, err := backupContainer.Exec(execCmd, event)
+	exitCode, _, err := backupContainer.Exec(backupPrepareCmd, event)
 
 	if err != nil {
 		backupLogger().Warn("Failed to run prepareMysqlBackup", "error", err.Error())

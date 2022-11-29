@@ -43,20 +43,6 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *csevent.Projec
 	ctx := context.Background()
 	mysqlFoundContainer, err := containermgr.FindByService(cli, serviceID, allowOff)
 
-	// Versions
-	fivesix := decimal.NewFromFloatWithExponent(5.6, -1)
-	eight := decimal.NewFromFloatWithExponent(8.0, -1)
-	tenone := decimal.NewFromFloatWithExponent(10.1, -1)
-	tentwo := decimal.NewFromFloatWithExponent(10.2, -1)
-	tenthree := decimal.NewFromFloatWithExponent(10.3, -1)
-	tenfour := decimal.NewFromFloatWithExponent(10.4, -1)
-	tenfive := decimal.NewFromFloatWithExponent(10.5, -1)
-	tensix := decimal.NewFromFloatWithExponent(10.6, -1)
-	tenseven := decimal.NewFromFloatWithExponent(10.7, -1)
-	teneight := decimal.NewFromFloatWithExponent(10.8, -1)
-	tennine := decimal.NewFromFloatWithExponent(10.9, -1)
-	tenten := decimal.NewFromFloatWithExponent(10.10, -1)
-
 	// Set defaults
 	instance := MysqlInstance{
 		Container: mysqlFoundContainer,
@@ -89,7 +75,7 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *csevent.Projec
 		case "MYSQL_MAJOR":
 			f, fErr := decimal.NewFromString(keys[1])
 			if fErr != nil {
-				instance.Version = eight // default to v8
+				instance.Version = decimal.NewFromFloatWithExponent(8.0, -1)
 			} else {
 				instance.Version = f
 			}
@@ -98,7 +84,7 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *csevent.Projec
 			//f, fErr := strconv.ParseFloat(keys[1], 64)
 			f, fErr := decimal.NewFromString(keys[1])
 			if fErr != nil {
-				instance.Version = tenfive
+				instance.Version = decimal.NewFromFloatWithExponent(10.9, -1)
 			} else {
 				instance.Version = f
 			}
@@ -107,7 +93,7 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *csevent.Projec
 			// As of 13-Oct-22, MariaDB removed `MARIADB_MAJOR` from v10.9+.
 			// Temporarily fallback to 10.9.
 			if instance.Variant != "mariadb" { // check for mysql so that if we already parsed _MAJOR, we don't reset it.
-				instance.Version = tennine
+				instance.Version = decimal.NewFromFloatWithExponent(10.9, -1)
 				instance.Variant = "mariadb"
 			}
 		case "MYSQL_USER":
@@ -129,15 +115,9 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *csevent.Projec
 			if bitnamiVersionErr != nil {
 				backupLogger().Warn("Error parsing bitnami mariadb version", "error", bitnamiVersionErr.Error())
 				sentry.CaptureException(bitnamiVersionErr)
-				instance.Version = tenfive // Fall back to 10.5
+				instance.Version = decimal.NewFromFloatWithExponent(10.5, -1) // Fall back to 10.5
 			} else {
-				if bitnamiVersion.LessThan(tenone) {
-					instance.Version = tenone
-				} else if bitnamiVersion.GreaterThan(tensix) {
-					instance.Version = tensix
-				} else {
-					instance.Version = bitnamiVersion
-				}
+				instance.Version = bitnamiVersion
 			}
 		case "MARIADB_ROOT_PASSWORD": // Bitnami
 			instance.Username = "root"
@@ -184,37 +164,13 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *csevent.Projec
 
 	// Set Image
 	if instance.Variant == "mysql" {
-		if instance.Version.GreaterThan(fivesix) {
+		if instance.Version.GreaterThan(decimal.NewFromFloatWithExponent(5.6, -1)) {
 			instance.BackupImage = "cmptstks/xtrabackup:8.0"
 		} else {
 			instance.BackupImage = "cmptstks/xtrabackup:2.4"
 		}
 	} else { // both mariadb and bitnami-mariadb
-		switch v := instance.Version; {
-		case v.Equal(tenone):
-			instance.BackupImage = "cmptstks/mariadb-backup:10.1"
-		case v.Equal(tentwo):
-			instance.BackupImage = "cmptstks/mariadb-backup:10.2"
-		case v.Equal(tenthree):
-			instance.BackupImage = "cmptstks/mariadb-backup:10.3"
-		case v.Equal(tenfour):
-			instance.BackupImage = "cmptstks/mariadb-backup:10.4"
-		case v.Equal(tenfive):
-			instance.BackupImage = "cmptstks/mariadb-backup:10.5"
-		case v.Equal(tensix):
-			instance.BackupImage = "cmptstks/mariadb-backup:10.6"
-		case v.Equal(tenseven):
-			instance.BackupImage = "cmptstks/mariadb-backup:10.7"
-		case v.Equal(teneight):
-			instance.BackupImage = "cmptstks/mariadb-backup:10.8"
-		case v.Equal(tennine):
-			instance.BackupImage = "cmptstks/mariadb-backup:10.9"
-		case v.Equal(tenten):
-			// TODO: Create 10.10 image when it moves to stable.
-			instance.BackupImage = "cmptstks/mariadb-backup:10.9"
-		default:
-			instance.BackupImage = "cmptstks/mariadb-backup:10.9"
-		}
+		instance.BackupImage = ""
 	}
 
 	backupLogger().Info("Have MySQL Target", "variant", instance.Variant, "version", instance.Version, "image", instance.BackupImage)

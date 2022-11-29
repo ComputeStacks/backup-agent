@@ -42,7 +42,7 @@ import (
 
 func main() {
 	var wg sync.WaitGroup
-	v := "1.3.2"
+	v := "1.3.3"
 	configureApp()
 	configureSentry(v)
 	ensureConsulReady()
@@ -73,6 +73,7 @@ func configureApp() {
 
 	////
 	// Defaults
+	viper.SetDefault("log.level", "INFO")
 	viper.SetDefault("sentry.dsn", "https://caf0e228c0dc4c36a4b4972cc2c0eba2@sentry.cmptstks.com/3")
 
 	// For testing purposes only, dont set `true` in production environments.
@@ -112,7 +113,6 @@ func configureApp() {
 	viper.SetDefault("backups.borg.fs.group", "nfsnobody")
 
 	// MariaDB Backup Configuration
-	viper.SetDefault("mariadb.io_throttle", "100")
 	viper.SetDefault("mariadb.lock_wait.query_type", "ALL")
 	viper.SetDefault("mariadb.lock_wait.timeout", "60")
 	viper.SetDefault("mariadb.long_queries.timeout", "20")
