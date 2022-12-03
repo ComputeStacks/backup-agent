@@ -48,7 +48,7 @@ backups:
       timeout: 60 # In seconds, how long to wait while attempting to grab global lock.
   borg:
     compress: "zstd,3"
-    image: "cmptstks/borg:stable"
+    image: "ghcr.io/computestacks/cs-docker-borg:latest"
 
     ##
     # If storing backups on an NFS server

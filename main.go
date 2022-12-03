@@ -42,7 +42,7 @@ import (
 
 func main() {
 	var wg sync.WaitGroup
-	v := "1.3.3"
+	v := "1.3.4"
 	configureApp()
 	configureSentry(v)
 	ensureConsulReady()
@@ -94,7 +94,7 @@ func configureApp() {
 	viper.SetDefault("backups.prune_freq", "15 1 * * *")
 	viper.SetDefault("backups.key", "changeme!")
 
-	viper.SetDefault("backups.borg.image", "cmptstks/borg:stable")
+	viper.SetDefault("backups.borg.image", "ghcr.io/computestacks/cs-docker-borg:latest")
 	viper.SetDefault("backups.borg.compression", "zstd,3")
 
 	viper.SetDefault("backups.borg.nfs", false)

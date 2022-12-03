@@ -170,9 +170,9 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *csevent.Projec
 	// Set Image
 	if instance.Variant == "mysql" {
 		if instance.Version.LessThan(semver.Version{Major: int64(8), Minor: int64(0)}) {
-			instance.BackupImage = "cmptstks/xtrabackup:2.4"
+			instance.BackupImage = "ghcr.io/computestacks/cs-docker-xtrabackup:2.4"
 		} else {
-			instance.BackupImage = "cmptstks/xtrabackup:8.0"
+			instance.BackupImage = "ghcr.io/computestacks/cs-docker-xtrabackup:8.0"
 		}
 	} else { // both mariadb and bitnami-mariadb
 		instance.BackupImage = ""

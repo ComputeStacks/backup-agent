@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.4
+
+* [CHANGE] Update system container images to use GitHub registry to avoid rate limits with Docker Hub.
+
+***
+
 ## 1.3.3
 
 * [CHANGE] MariaDB will use built-in MariaBackup, rather than a separate container.
