@@ -30,7 +30,7 @@ func (a *Archive) Create() (ArchiveMessage, *LogMessage) {
 		return borgResponse, &log
 	}
 
-	backupCmd := []string{"cd /mnt/data && borg --log-json create --error --one-file-system --json --numeric-owner --exclude-caches"}
+	backupCmd := []string{"cd /mnt/data && borg --log-json create --error --one-file-system --json --numeric-ids --exclude-caches"}
 	backupCmd = append(backupCmd, "--compression "+viper.GetString("backups.borg.compression"))
 	backupCmd = append(backupCmd, a.archivePath())
 	backupCmd = append(backupCmd, ".")
@@ -45,6 +45,8 @@ func (a *Archive) Create() (ArchiveMessage, *LogMessage) {
 	if marshalErr == nil {
 		borgLogger().Info("Completed backup", "archive", borgResponse.Archive.ID, "duration", hclog.Fmt("%.5f", borgResponse.Archive.Duration))
 		return borgResponse, nil
+	} else {
+		borgLogger().Debug("Unmarshal Error on Borg Backup Response", "error", marshalErr.Error(), "raw", response)
 	}
 	borgLogger().Warn("Backup appears to have succeeded, but there was an error decoding the response data from borg.")
 	return ArchiveMessage{}, nil
@@ -71,7 +73,7 @@ func (a *Archive) Restore(filePaths []string) *LogMessage {
 	}
 
 	// Perform Restore
-	cmd := []string{"cd /mnt/data && borg --log-json extract --error --numeric-owner"}
+	cmd := []string{"cd /mnt/data && borg --log-json extract --error --numeric-ids"}
 	cmd = append(cmd, a.archivePath())
 	for _, p := range filePaths {
 		cmd = append(cmd, p)
