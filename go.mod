@@ -7,6 +7,7 @@ require (
 	github.com/Microsoft/go-winio v0.4.14 // indirect
 	github.com/armon/go-metrics v0.3.4 // indirect
 	github.com/containerd/containerd v1.4.1 // indirect
+	github.com/coreos/go-semver v0.3.0
 	github.com/docker/distribution v0.0.0-20190903185437-aeaeb8440713 // indirect
 	github.com/docker/docker v1.4.2-0.20190905002414-c5ca284a8569
 	github.com/docker/go-connections v0.4.1-0.20190612165340-fd1b1942c4d5 // indirect
@@ -32,7 +33,6 @@ require (
 	github.com/pelletier/go-toml v1.8.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/shopspring/decimal v1.3.1
 	github.com/sirupsen/logrus v1.7.0 // indirect
 	github.com/spf13/afero v1.4.1 // indirect
 	github.com/spf13/cast v1.3.1 // indirect

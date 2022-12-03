@@ -6,7 +6,7 @@ import (
 	"cs-agent/csevent"
 	"cs-agent/types"
 	"errors"
-	"github.com/getsentry/sentry-go"
+	"github.com/coreos/go-semver/semver"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -16,13 +16,12 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
-	"github.com/shopspring/decimal"
 )
 
 type MysqlInstance struct {
 	Name         string
 	Container    *containermgr.Container
-	Version      decimal.Decimal
+	Version      *semver.Version
 	BackupImage  string
 	IPAddress    string
 	Username     string
@@ -43,6 +42,13 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *csevent.Projec
 	ctx := context.Background()
 	mysqlFoundContainer, err := containermgr.FindByService(cli, serviceID, allowOff)
 
+	if err != nil {
+		backupLogger().Warn("Failed to load MySQL Master", "error", err.Error(), "function", "loadMysqlMaster", "action", "FindRunningContainer", "serviceID", serviceID)
+		go event.PostEventUpdate("agent-6e0d0cbb268ac0b1", "Container appears to be offline. Unable to perform"+" "+event.EventLog.Locale)
+		event.EventLog.Status = "cancelled"
+		return &MysqlInstance{}, err
+	}
+
 	// Set defaults
 	instance := MysqlInstance{
 		Container: mysqlFoundContainer,
@@ -52,19 +58,14 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *csevent.Projec
 		Group:     "mysql",
 	}
 
-	if err != nil {
-		backupLogger().Warn("Failed to load MySQL Master", "error", err.Error(), "function", "loadMysqlMaster", "action", "FindRunningContainer", "serviceID", serviceID)
-		go event.PostEventUpdate("agent-6e0d0cbb268ac0b1", "Container appears to be offline. Unable to perform"+" "+event.EventLog.Locale)
-		event.EventLog.Status = "cancelled"
-		return &instance, err
-	}
-
 	mysqlContainer, err := cli.ContainerInspect(ctx, mysqlFoundContainer.ID)
 
 	if err != nil {
 		backupLogger().Warn("Failed to load MySQL Master", "error", err.Error(), "function", "loadMysqlMaster", "action", "ContainerInspect")
 		return &instance, err
 	}
+
+	versionStage := ""
 
 	for _, c := range mysqlContainer.Config.Env {
 		keys := strings.Split(c, "=")
@@ -73,29 +74,13 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *csevent.Projec
 			instance.Username = "root"
 			instance.Password = keys[1]
 		case "MYSQL_MAJOR":
-			f, fErr := decimal.NewFromString(keys[1])
-			if fErr != nil {
-				instance.Version = decimal.NewFromFloatWithExponent(8.0, -1)
-			} else {
-				instance.Version = f
-			}
+			versionStage = keys[1]
 			instance.Variant = "mysql"
 		case "MARIADB_MAJOR":
-			//f, fErr := strconv.ParseFloat(keys[1], 64)
-			f, fErr := decimal.NewFromString(keys[1])
-			if fErr != nil {
-				instance.Version = decimal.NewFromFloatWithExponent(10.9, -1)
-			} else {
-				instance.Version = f
-			}
+			versionStage = keys[1]
 			instance.Variant = "mariadb"
 		case "MARIADB_VERSION":
-			// As of 13-Oct-22, MariaDB removed `MARIADB_MAJOR` from v10.9+.
-			// Temporarily fallback to 10.9.
-			if instance.Variant != "mariadb" { // check for mysql so that if we already parsed _MAJOR, we don't reset it.
-				instance.Version = decimal.NewFromFloatWithExponent(10.9, -1)
-				instance.Variant = "mariadb"
-			}
+			instance.Variant = "mariadb"
 		case "MYSQL_USER":
 			instance.Username = keys[1]
 		case "MYSQL_PASSWORD":
@@ -109,21 +94,40 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *csevent.Projec
 				instance.Group = "root"
 			}
 		case "BITNAMI_IMAGE_VERSION":
-			bitnamiVersionStr := strings.Split(keys[1], ".")
-			bitnamiVersionStrCombined := bitnamiVersionStr[0] + "." + bitnamiVersionStr[1]
-			bitnamiVersion, bitnamiVersionErr := decimal.NewFromString(bitnamiVersionStrCombined)
-			if bitnamiVersionErr != nil {
-				backupLogger().Warn("Error parsing bitnami mariadb version", "error", bitnamiVersionErr.Error())
-				sentry.CaptureException(bitnamiVersionErr)
-				instance.Version = decimal.NewFromFloatWithExponent(10.5, -1) // Fall back to 10.5
-			} else {
-				instance.Version = bitnamiVersion
-			}
+			versionStage = keys[1]
 		case "MARIADB_ROOT_PASSWORD": // Bitnami
 			instance.Username = "root"
 			instance.Password = keys[1]
 		}
 	}
+
+	if versionStage == "" {
+		backupLogger().Warn("Failed to identify MySQL Version", "error", "version string is blank", "function", "loadMysqlMaster", "serviceID", serviceID)
+		go event.PostEventUpdate("agent-f422717152297b23", "Unable to load MySQL Version, halting job. "+" "+event.EventLog.Locale)
+		event.EventLog.Status = "failed"
+		return &instance, errors.New("missing version string")
+	}
+
+	// format version string
+	dotParts := strings.SplitN(versionStage, ".", 3)
+
+	// Convert to dotted-tri format
+	switch len(dotParts) {
+	case 1:
+		versionStage = versionStage + ".0.0" // 1 => 1.0.0
+	case 2:
+		versionStage = versionStage + ".0" // 1.0 => 1.0.0
+	}
+
+	v, vErr := semver.NewVersion(versionStage)
+	if vErr != nil {
+		backupLogger().Warn("Failed to identify MySQL Version", "error", vErr.Error(), "function", "loadMysqlMaster", "serviceID", serviceID)
+		go event.PostEventUpdate("agent-114697045cd756da", "Unable to load MySQL Version, halting job.\n\n"+vErr.Error())
+		event.EventLog.Status = "failed"
+		return &instance, vErr
+	}
+
+	instance.Version = v
 
 	for _, v := range mysqlContainer.Mounts {
 		if v.Destination == instance.MountPath {
@@ -149,9 +153,8 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *csevent.Projec
 	}
 
 	// Ensure we load up all our service IDs to allow our backup container full access to the project.
+	// Also grab the MariaDB version that uses labels rather than env vars.
 	for k, v := range mysqlContainer.Config.Labels {
-		//keys := strings.Split(l, "=")
-		backupLogger().Debug("Have MySQL Label", "key", k, "label", v)
 		switch k {
 		case "org.projectcalico.label.token":
 			instance.Calico = v
@@ -159,21 +162,23 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *csevent.Projec
 			instance.DeploymentID = v
 		case "com.computestacks.service_id":
 			instance.ServiceID = v
+		case "org.opencontainers.image.version":
+			instance.Version = semver.New(v)
 		}
 	}
 
 	// Set Image
 	if instance.Variant == "mysql" {
-		if instance.Version.GreaterThan(decimal.NewFromFloatWithExponent(5.6, -1)) {
-			instance.BackupImage = "cmptstks/xtrabackup:8.0"
-		} else {
+		if instance.Version.LessThan(semver.Version{Major: int64(8), Minor: int64(0)}) {
 			instance.BackupImage = "cmptstks/xtrabackup:2.4"
+		} else {
+			instance.BackupImage = "cmptstks/xtrabackup:8.0"
 		}
 	} else { // both mariadb and bitnami-mariadb
 		instance.BackupImage = ""
 	}
 
-	backupLogger().Info("Have MySQL Target", "variant", instance.Variant, "version", instance.Version, "image", instance.BackupImage)
+	backupLogger().Info("Have MySQL Target", "variant", instance.Variant, "version", instance.Version.String(), "image", instance.BackupImage)
 
 	return &instance, nil
 }
