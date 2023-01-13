@@ -42,7 +42,7 @@ import (
 
 func main() {
 	var wg sync.WaitGroup
-	v := "1.3.4"
+	v := "1.3.5"
 	configureApp()
 	configureSentry(v)
 	ensureConsulReady()

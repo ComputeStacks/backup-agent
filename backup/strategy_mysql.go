@@ -101,6 +101,21 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *csevent.Projec
 		}
 	}
 
+	// Ensure we load up all our service IDs to allow our backup container full access to the project.
+	// Also grab the MariaDB version that uses labels rather than env vars.
+	for k, v := range mysqlContainer.Config.Labels {
+		switch k {
+		case "org.projectcalico.label.token":
+			instance.Calico = v
+		case "com.computestacks.deployment_id":
+			instance.DeploymentID = v
+		case "com.computestacks.service_id":
+			instance.ServiceID = v
+		case "org.opencontainers.image.version":
+			versionStage = v
+		}
+	}
+
 	if versionStage == "" {
 		backupLogger().Warn("Failed to identify MySQL Version", "error", "version string is blank", "function", "loadMysqlMaster", "serviceID", serviceID)
 		go event.PostEventUpdate("agent-f422717152297b23", "Unable to load MySQL Version, halting job. "+" "+event.EventLog.Locale)
@@ -150,21 +165,6 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *csevent.Projec
 		return &instance, errors.New("unable to load ip address of container")
 	} else if ipAddr != "" {
 		instance.IPAddress = ipAddr
-	}
-
-	// Ensure we load up all our service IDs to allow our backup container full access to the project.
-	// Also grab the MariaDB version that uses labels rather than env vars.
-	for k, v := range mysqlContainer.Config.Labels {
-		switch k {
-		case "org.projectcalico.label.token":
-			instance.Calico = v
-		case "com.computestacks.deployment_id":
-			instance.DeploymentID = v
-		case "com.computestacks.service_id":
-			instance.ServiceID = v
-		case "org.opencontainers.image.version":
-			instance.Version = semver.New(v)
-		}
 	}
 
 	// Set Image

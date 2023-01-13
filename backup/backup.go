@@ -41,8 +41,7 @@ func Perform(consul *consulAPI.Client, job *types.Job) error {
 		return err
 	}
 
-	// Sanity check to ensure we should perform the backup
-	if !vol.Backup || vol.Node != hostname {
+	if vol.Node != hostname {
 		backupLogger().Info("Skipping backup job for volume not under my control", "volume", job.VolumeName)
 		return nil
 	}
