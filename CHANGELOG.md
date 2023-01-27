@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.6
+
+* [FIX] Resolved error handling response from borg during volume deletion.
+
+***
+
 ## 1.3.5
 
 * [FIX] Resolve an issue that prevented volumes with backups disabled from being cloned.

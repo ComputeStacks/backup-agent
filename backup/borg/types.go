@@ -36,17 +36,16 @@ type ArchiveMessage struct {
 
 type ArchiveResponse struct {
 	ArchiveItems []struct {
-		ID            string      `json:"id"`
-		Name          string      `json:"name"`
-		Username      string      `json:"username"`
-		ChunkerParams []int       `json:"chunker_params"`
-		CommandLine   []string    `json:"command_line"`
-		Comment       string      `json:"comment"`
-		Duration      float64     `json:"duration"`
-		Start         BTimeFormat `json:"start"`
-		End           BTimeFormat `json:"end"`
-		Hostname      string      `json:"hostname"`
-		Limits        struct {
+		ID          string      `json:"id"`
+		Name        string      `json:"name"`
+		Username    string      `json:"username"`
+		CommandLine []string    `json:"command_line"`
+		Comment     string      `json:"comment"`
+		Duration    float64     `json:"duration"`
+		Start       BTimeFormat `json:"start"`
+		End         BTimeFormat `json:"end"`
+		Hostname    string      `json:"hostname"`
+		Limits      struct {
 			MaxArchiveSize float64 `json:"max_archive_size"`
 		} `json:"limits"`
 	} `json:"archives"`
