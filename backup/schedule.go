@@ -63,7 +63,6 @@ func scheduleBackup(consul *consulAPI.Client, c *cron.Cron) {
 	keys, _, err := kv.Keys("volumes", "", nil)
 	if err != nil {
 		backupLogger().Warn("Fatal error getting volume list from consul", "error", err.Error())
-		sentry.CaptureException(err)
 		return
 	}
 

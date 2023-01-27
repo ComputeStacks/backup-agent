@@ -56,7 +56,6 @@ WAIT:
 	events, meta, err := kvClient.Keys("jobs", "", opts)
 	if err != nil {
 		jobEvent().Warn("Fatal error loading job list", "error", err.Error())
-		sentry.CaptureException(err)
 		if errCount > 12 {
 			jobEvent().Warn("Error count has reach more than 12, stopping all jobs")
 			return
