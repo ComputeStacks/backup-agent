@@ -51,7 +51,22 @@ backups:
     image: "ghcr.io/computestacks/cs-docker-borg:latest"
 
     ##
+    # SSH
+    ssh:
+      enabled: false
+      user: cstacks
+      host: example.com
+      port: 22
+
+      # MUST be inside the path `/etc/computestacks` on the host.
+      keyfile: "/etc/computestacks/backup/.ssh/id_ed25519"
+
+      # Must be absolute and start with a '/', and NOT have a trailing `/`.
+      host_path: "/mnt/data/backups"
+
+    ##
     # If storing backups on an NFS server
+    # Note: This is not compatible with SSH.
     nfs: false # Set `true` to use nfs server to store backup volumes.
     nfs_host: 127.0.0.1
     nfs_host_path: "/var/nfsshare/backups"
@@ -64,6 +79,8 @@ backups:
       user: "root" # SSH key used to connect to NFS server
       port: "22"
       keyfile: "/root/.ssh/id_ed25519" # SSH key used to connect to NFS server
+      fs_user: "nfsnobody"
+      fs_group: "nfsnobody"
 docker:
   version: "1.41"
 queue:

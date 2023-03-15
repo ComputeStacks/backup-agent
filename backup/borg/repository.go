@@ -15,6 +15,7 @@ package borg
 
 import (
 	"cs-agent/types"
+	"github.com/spf13/viper"
 	"reflect"
 	"strconv"
 
@@ -75,7 +76,7 @@ func (r *Repository) Setup(vol *types.Volume, source *types.Volume) *LogMessage 
 	var backupCmd []string
 
 	backupCmd = append(backupCmd, "borg --log-json init --error --encryption=repokey-blake2")
-	backupCmd = append(backupCmd, r.repoPath())
+	//backupCmd = append(backupCmd, r.repoPath())
 
 	if _, _, log := r.ExecWithLog(backupCmd); log != (LogMessage{}) {
 		return &log
@@ -96,7 +97,7 @@ func (r *Repository) Info() (RepositoryResponse, *LogMessage) {
 	}
 
 	cmd := []string{"borg --log-json info --error --json"}
-	cmd = append(cmd, r.repoPath())
+	//cmd = append(cmd, r.repoPath())
 
 	_, response, logMsg := r.ExecWithLog(cmd)
 
@@ -119,7 +120,7 @@ func (r *Repository) Contents() (RepositoryContentResponse, *LogMessage) {
 	}
 
 	cmd := []string{"borg --log-json list --error --json"}
-	cmd = append(cmd, r.repoPath())
+	//cmd = append(cmd, r.repoPath())
 
 	_, response, logMsg := r.ExecWithLog(cmd)
 
@@ -170,7 +171,7 @@ func (r *Repository) Prune() *LogMessage {
 	cmd = append(cmd, "--keep-weekly="+strconv.Itoa(r.Retention.Weekly))
 	cmd = append(cmd, "--keep-monthly="+strconv.Itoa(r.Retention.Monthly))
 	cmd = append(cmd, "--keep-yearly="+strconv.Itoa(r.Retention.Annually))
-	cmd = append(cmd, r.repoPath())
+	//cmd = append(cmd, r.repoPath())
 
 	if _, _, log := r.ExecWithLog(cmd); log != (LogMessage{}) {
 		return &log
@@ -231,5 +232,15 @@ func (r *Repository) SyncConsul() {
 }
 
 func (r *Repository) repoPath() string {
-	return "/mnt/borg/backup"
+	if viper.GetBool("backups.borg.ssh.enabled") {
+		sshUser := viper.GetString("backups.borg.ssh.user")
+		sshHost := viper.GetString("backups.borg.ssh.host")
+		sshPort := viper.GetString("backups.borg.ssh.port")
+		hostPath := viper.GetString("backups.borg.ssh.host_path")
+		fullPath := "ssh://" + sshUser + "@" + sshHost + ":" + sshPort + hostPath + "/" + r.Name
+		borgLogger().Debug("Repository Path", "repository", r.Name, "path", fullPath)
+		return fullPath
+	} else {
+		return "/mnt/borg/backup"
+	}
 }

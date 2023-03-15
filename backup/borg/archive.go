@@ -167,7 +167,7 @@ func (a *Archive) generateName() bool {
 	if contentsErr != nil {
 		return false
 	}
-	rand.Seed(time.Now().UnixNano())
+	rand.New(rand.NewSource(time.Now().UnixNano()))
 	randNum := rand.Intn(10000-10) + 10
 	for _, i := range contents.Archives {
 		if i.Name == a.Name {
@@ -179,5 +179,6 @@ func (a *Archive) generateName() bool {
 }
 
 func (a *Archive) archivePath() string {
-	return "/mnt/borg/backup::" + a.Name
+	return "::" + a.Name
+	//return a.Repository.repoPath() + "::" + a.Name
 }

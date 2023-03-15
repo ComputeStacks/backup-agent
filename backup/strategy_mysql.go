@@ -225,7 +225,7 @@ func buildBackupAgent(cli *client.Client, mysqlMaster *MysqlInstance) (*containe
 
 	env := []string{"MYSQL_HOST=" + mysqlMaster.IPAddress, "MYSQL_PASSWORD=" + mysqlMaster.Password} // Used by init script to ensure MySQL is available before attempting a backup
 
-	rand.Seed(time.Now().UnixNano()) // Seed for random container name
+	rand.New(rand.NewSource(time.Now().UnixNano())) // Seed for random container name
 	randNumber := 10 + rand.Intn(1000-10)
 	containerName := "backup-" + strconv.Itoa(randNumber) + string(t.Format("150405"))
 

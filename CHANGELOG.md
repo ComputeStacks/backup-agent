@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.0
+
+* [FEATURE] Support backing up over SSH as an alternative to NFS.
+
+***
+
 ## 1.3.6
 
 * [FIX] Resolved error handling response from borg during volume deletion.

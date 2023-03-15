@@ -36,8 +36,7 @@ func Watch(wg *sync.WaitGroup) {
 	}
 	hostname, _ := os.Hostname()
 
-	// On boot, trigger iptable reload
-	log.New().Info("Syncing firewall")
+	// On boot, trigger firewall reload
 	go firewall.Perform(consul)
 
 	// Build Job Queues

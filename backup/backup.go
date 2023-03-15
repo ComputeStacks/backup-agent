@@ -9,6 +9,7 @@ import (
 	"cs-agent/csevent"
 	"cs-agent/types"
 	"errors"
+	"github.com/spf13/viper"
 	"os"
 	"time"
 
@@ -74,6 +75,17 @@ func Perform(consul *consulAPI.Client, job *types.Job) error {
 			if repoErr != nil && projectEvent != nil {
 				projectEvent.EventLog.Status = "failed"
 				projectEvent.PostEventUpdate("agent-d4c34f1d89c20aa6", repoErr.ToYaml())
+				projectEvent.CloseEvent()
+				return errors.New(repoErr.Message)
+			}
+		} else if findRepoMsg.MsgID == "InvalidRepository" && viper.GetBool("backups.borg.ssh.enabled") {
+			// Empty SSH repos return 'InvalidRepository' rather than 'DoesNotExist'.
+			repo = &borg.Repository{Name: vol.Name}
+			// Build backup container
+			repoErr := repo.Setup(&vol, &vol)
+			if repoErr != nil && projectEvent != nil {
+				projectEvent.EventLog.Status = "failed"
+				projectEvent.PostEventUpdate("agent-7fad20a06cbd26a2", repoErr.ToYaml())
 				projectEvent.CloseEvent()
 				return errors.New(repoErr.Message)
 			}

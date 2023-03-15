@@ -42,7 +42,7 @@ import (
 
 func main() {
 	var wg sync.WaitGroup
-	v := "1.3.6"
+	v := "1.4.0"
 	configureApp()
 	configureSentry(v)
 	ensureConsulReady()
@@ -53,7 +53,11 @@ func main() {
 		backup.InitSchedule(c)
 	}
 	go job.Watch(&wg)
-	log.New().Info("Starting CS-Agent", "version", v, "environment", ReleaseEnvironment(), "backupWorkers", wgCount, "firewallWorkers", 1)
+	log.New().Info("Starting CS-Agent", "version", v)
+	log.New().Info("Agent Configuration", "environment", ReleaseEnvironment())
+	log.New().Info("Agent Configuration", "backupWorkers", wgCount)
+	log.New().Info("Agent Configuration", "firewallWorkers", 1)
+	log.New().Info("Agent Configuration", "backingFS", currentBackupMethod())
 
 	//select {} // Hold open the process
 	wg.Wait()
@@ -97,6 +101,14 @@ func configureApp() {
 	viper.SetDefault("backups.borg.image", "ghcr.io/computestacks/cs-docker-borg:latest")
 	viper.SetDefault("backups.borg.compression", "zstd,3")
 
+	viper.SetDefault("backups.borg.ssh.enabled", false)
+	viper.SetDefault("backups.borg.ssh.user", "")
+	viper.SetDefault("backups.borg.ssh.host", "")
+	viper.SetDefault("backups.borg.ssh.port", "22")
+	viper.SetDefault("backups.borg.ssh.host_path", "/tmp")
+	viper.SetDefault("backups.borg.ssh.keyfile", "/etc/computestacks/backup/.ssh/id_ed25519")
+	viper.SetDefault("backups.borg.ssh_borg_remote_path", "/usr/bin/borg")
+
 	viper.SetDefault("backups.borg.nfs", false)
 	viper.SetDefault("backups.borg.nfs_host", "127.0.0.1")
 	viper.SetDefault("backups.borg.nfs_opts", ",async,noatime,rsize=32768,wsize=32768")
@@ -109,8 +121,10 @@ func configureApp() {
 	// Whether we ssh into the backup server and create the path.
 	viper.SetDefault("backups.borg.nfs_create_path", true)
 
-	viper.SetDefault("backups.borg.fs.user", "nfsnobody")
-	viper.SetDefault("backups.borg.fs.group", "nfsnobody")
+	// When using NFS, and nfs_creat_path is enabled, we will attempt to change the ownership
+	// on the host to this value. The SSH user MUST have permissions to do so.
+	viper.SetDefault("backups.borg.nfs_ssh.fs_user", "nobody")
+	viper.SetDefault("backups.borg.nfs_ssh.fs_group", "nogroup")
 
 	// MariaDB Backup Configuration
 	viper.SetDefault("mariadb.lock_wait.query_type", "ALL")
@@ -118,6 +132,16 @@ func configureApp() {
 	viper.SetDefault("mariadb.long_queries.timeout", "20")
 	viper.SetDefault("mariadb.long_queries.query_type", "SELECT")
 
+}
+
+func currentBackupMethod() string {
+	if viper.GetBool("backups.borg.ssh.enabled") {
+		return "ssh"
+	} else if viper.GetBool("backups.borg.nfs") {
+		return "nfs"
+	} else {
+		return "local"
+	}
 }
 
 func ensureConsulReady() {

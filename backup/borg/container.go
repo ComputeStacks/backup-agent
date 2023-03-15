@@ -55,11 +55,28 @@ func (r *Repository) InitBackupContainer(vol *types.Volume, source *types.Volume
 	labels["com.computestacks.role"] = "backup"
 	labels["com.computestacks.for"] = vol.Name
 
+	if viper.GetBool("backups.borg.ssh.enabled") {
+		labels["com.computestacks.backup-kind"] = "ssh"
+	} else if viper.GetBool("backups.borg.nfs") {
+		labels["com.computestacks.backup-kind"] = "nfs"
+	} else {
+		labels["com.computestacks.backup-kind"] = "local"
+	}
+
 	// Generate Container Name
 	t := time.Now()
-	rand.Seed(time.Now().UnixNano()) // Seed for random container name
+	rand.New(rand.NewSource(time.Now().UnixNano())) // Seed for random container name
 	randNumber := 10 + rand.Intn(1000-10)
 	containerName := "backup-" + strconv.Itoa(randNumber) + string(t.Format("150405"))
+
+	borgEnv := []string{
+		"BORG_PASSPHRASE=" + viper.GetString("backups.key"),
+		"BORG_RELOCATED_REPO_ACCESS_IS_OK=yes",
+		"BORG_DELETE_I_KNOW_WHAT_I_AM_DOING=YES",
+		"BORG_CHECK_I_KNOW_WHAT_I_AM_DOING=YES",
+		"BORG_BASE_DIR=/mnt/borg",
+		"BORG_REPO=" + r.repoPath(),
+	}
 
 	hostConfig := container.HostConfig{
 		NetworkMode: "none",
@@ -67,6 +84,18 @@ func (r *Repository) InitBackupContainer(vol *types.Volume, source *types.Volume
 		Mounts:      []mount.Mount{},
 		AutoRemove:  true,
 		Privileged:  viper.GetBool("docker.privileged"),
+	}
+
+	if viper.GetBool("backups.borg.ssh.enabled") {
+		hostConfig.Mounts = append(hostConfig.Mounts, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   "/etc/computestacks",
+			ReadOnly: true,
+			Target:   "/etc/computestacks",
+		})
+		borgEnv = append(borgEnv, "BORG_REMOTE_PATH="+viper.GetString("backups.borg.ssh_borg_remote_path"))
+		borgEnv = append(borgEnv, "BORG_RSH=ssh -i "+viper.GetString("backups.borg.ssh.keyfile"))
+		hostConfig.NetworkMode = "host"
 	}
 
 	hostConfig.Mounts = append(hostConfig.Mounts, mount.Mount{
@@ -86,13 +115,7 @@ func (r *Repository) InitBackupContainer(vol *types.Volume, source *types.Volume
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:  viper.GetString("backups.borg.image"),
 		Labels: labels,
-		Env: []string{
-			"BORG_PASSPHRASE=" + viper.GetString("backups.key"),
-			"BORG_RELOCATED_REPO_ACCESS_IS_OK=yes",
-			"BORG_DELETE_I_KNOW_WHAT_I_AM_DOING=YES",
-			"BORG_CHECK_I_KNOW_WHAT_I_AM_DOING=YES",
-			"BORG_BASE_DIR=/mnt/borg",
-		},
+		Env:    borgEnv,
 	}, &hostConfig, nil, containerName)
 
 	if err != nil {
@@ -134,7 +157,7 @@ func (r *Repository) ExecWithLog(cmd []string) (exitCode int, response string, l
 	if reflect.ValueOf(r.Container).IsNil() {
 		return 99, "", LogMessage{Message: "Missing backup container"}
 	}
-	execCmd := []string{"ash", "-c", strings.Join(cmd, " ")}
+	execCmd := []string{"bash", "-c", strings.Join(cmd, " ")}
 	exitCode, response, err := r.Container.Exec(execCmd, nil)
 
 	if err != nil {
@@ -192,9 +215,9 @@ func (r *Repository) ensureBackupVolumeExists(cli *client.Client, vol *types.Vol
 
 		if viper.GetBool("backups.borg.nfs") {
 			if viper.GetBool("backups.borg.nfs_create_path") {
-				borgLogger().Info("Creating remote volume directory", "volume", "b-"+vol.Name)
+				borgLogger().Info("Creating remote volume directory", "volume", "b-"+vol.Name, "type", "nfs")
 				sshCmd := "mkdir -p " + viper.GetString("backups.borg.nfs_host_path") + "/b-" + vol.Name
-				sshCmd = sshCmd + " && chown -R " + viper.GetString("backups.borg.fs.user") + ":" + viper.GetString("backups.borg.fs.group") + " " + viper.GetString("backups.borg.nfs_host_path") + "/b-" + vol.Name
+				sshCmd = sshCmd + " && chown -R " + viper.GetString("backups.borg.nfs_ssh.fs_user") + ":" + viper.GetString("backups.borg.nfs_ssh.fs_group") + " " + viper.GetString("backups.borg.nfs_host_path") + "/b-" + vol.Name
 				connInfo := sshremote.ServerConnInfo{
 					Server: viper.GetString("backups.borg.nfs_host"),
 					Port:   viper.GetString("backups.borg.nfs_ssh.port"),
@@ -217,6 +240,29 @@ func (r *Repository) ensureBackupVolumeExists(cli *client.Client, vol *types.Vol
 			driverOpts["type"] = "nfs"
 			driverOpts["o"] = "addr=" + viper.GetString("backups.borg.nfs_host") + ",rw,nfsvers=4" + viper.GetString("backups.borg.nfs_opts")
 			driverOpts["device"] = ":" + viper.GetString("backups.borg.nfs_host_path") + "/b-" + vol.Name
+
+		} else if viper.GetBool("backups.borg.ssh.enabled") {
+
+			borgLogger().Info("Creating remote volume directory", "repository", r.Name, "type", "ssh")
+			sshCmd := "mkdir -p " + viper.GetString("backups.borg.ssh.host_path") + "/" + r.Name
+			connInfo := sshremote.ServerConnInfo{
+				Server: viper.GetString("backups.borg.ssh.host"),
+				Port:   viper.GetString("backups.borg.ssh.port"),
+				User:   viper.GetString("backups.borg.ssh.user"),
+				Key:    viper.GetString("backups.borg.ssh.keyfile"),
+			}
+
+			createDirSuccess, createDirErr := sshremote.SSHCommandBool(sshCmd, connInfo)
+
+			if createDirErr != nil {
+				borgLogger().Error("Fatal error creating directory on remote server", "repository", r.Name, "error", createDirErr.Error(), "type", "ssh")
+				return false, createDirErr
+			}
+
+			if !createDirSuccess {
+				borgLogger().Warn("Invalid response while creating remote directory", "repository", r.Name, "type", "ssh")
+				return false, errors.New("invalid response while creating directory")
+			}
 		}
 
 		opts := volumeTypes.VolumeCreateBody{
@@ -277,6 +323,29 @@ func (r *Repository) TrashBackupVolumeExists(vol *types.Volume) (bool, error) {
 
 		if !destroyDirSuccess {
 			borgLogger().Warn("Invalid response while destroying remote directory", "volume", "b-"+vol.Name)
+			return false, errors.New("invalid response while destroying directory")
+		}
+	} else if viper.GetBool("backups.borg.ssh.enabled") {
+
+		borgLogger().Info("Cleaning remote volume path", "repository", r.Name, "method", "ssh")
+
+		sshCmd := "rm -rf " + viper.GetString("backups.borg.ssh.host_path") + "/" + vol.Name
+		connInfo := sshremote.ServerConnInfo{
+			Server: viper.GetString("backups.borg.ssh.host"),
+			Port:   viper.GetString("backups.borg.ssh.port"),
+			User:   viper.GetString("backups.borg.ssh.user"),
+			Key:    viper.GetString("backups.borg.ssh.keyfile"),
+		}
+
+		destroyDirSuccess, destroyDirErr := sshremote.SSHCommandBool(sshCmd, connInfo)
+
+		if destroyDirErr != nil {
+			borgLogger().Error("Error removing remote directory", "repository", r.Name, "error", destroyDirErr.Error())
+			return false, destroyDirErr
+		}
+
+		if !destroyDirSuccess {
+			borgLogger().Warn("Invalid response while destroying remote directory", "repository", r.Name, "type", "ssh")
 			return false, errors.New("invalid response while destroying directory")
 		}
 	} else {

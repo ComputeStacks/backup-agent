@@ -21,8 +21,6 @@ rm -rf /tmp/cs-agent*
 systemctl daemon-reload && systemctl start cs-agent
 ```
 
-
-
 ## Development
 
 Install required go packages with `go mod download`
