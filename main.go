@@ -42,7 +42,7 @@ import (
 
 func main() {
 	var wg sync.WaitGroup
-	v := "1.4.0"
+	v := "1.4.1"
 	configureApp()
 	configureSentry(v)
 	ensureConsulReady()
@@ -100,6 +100,7 @@ func configureApp() {
 
 	viper.SetDefault("backups.borg.image", "ghcr.io/computestacks/cs-docker-borg:latest")
 	viper.SetDefault("backups.borg.compression", "zstd,3")
+	viper.SetDefault("backups.borg.lock_wait", "1")
 
 	viper.SetDefault("backups.borg.ssh.enabled", false)
 	viper.SetDefault("backups.borg.ssh.user", "")

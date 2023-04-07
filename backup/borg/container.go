@@ -243,8 +243,8 @@ func (r *Repository) ensureBackupVolumeExists(cli *client.Client, vol *types.Vol
 
 		} else if viper.GetBool("backups.borg.ssh.enabled") {
 
-			borgLogger().Info("Creating remote volume directory", "repository", r.Name, "type", "ssh")
-			sshCmd := "mkdir -p " + viper.GetString("backups.borg.ssh.host_path") + "/" + r.Name
+			borgLogger().Info("Creating remote volume directory", "repository", "b-"+r.Name, "type", "ssh")
+			sshCmd := "mkdir -p " + viper.GetString("backups.borg.ssh.host_path") + "/b-" + r.Name + "/backup"
 			connInfo := sshremote.ServerConnInfo{
 				Server: viper.GetString("backups.borg.ssh.host"),
 				Port:   viper.GetString("backups.borg.ssh.port"),
@@ -329,7 +329,7 @@ func (r *Repository) TrashBackupVolumeExists(vol *types.Volume) (bool, error) {
 
 		borgLogger().Info("Cleaning remote volume path", "repository", r.Name, "method", "ssh")
 
-		sshCmd := "rm -rf " + viper.GetString("backups.borg.ssh.host_path") + "/" + vol.Name
+		sshCmd := "rm -rf " + viper.GetString("backups.borg.ssh.host_path") + "/b-" + vol.Name
 		connInfo := sshremote.ServerConnInfo{
 			Server: viper.GetString("backups.borg.ssh.host"),
 			Port:   viper.GetString("backups.borg.ssh.port"),

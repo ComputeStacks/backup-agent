@@ -75,8 +75,9 @@ func (r *Repository) Setup(vol *types.Volume, source *types.Volume) *LogMessage 
 
 	var backupCmd []string
 
-	backupCmd = append(backupCmd, "borg --log-json init --error --encryption=repokey-blake2")
-	//backupCmd = append(backupCmd, r.repoPath())
+	backupCmd = append(backupCmd, "borg --log-json")
+	backupCmd = append(backupCmd, "--lock-wait "+viper.GetString("backups.borg.lock_wait"))
+	backupCmd = append(backupCmd, "init --error --encryption=repokey-blake2")
 
 	if _, _, log := r.ExecWithLog(backupCmd); log != (LogMessage{}) {
 		return &log
@@ -96,8 +97,9 @@ func (r *Repository) Info() (RepositoryResponse, *LogMessage) {
 		return RepositoryResponse{}, &LogMessage{Message: "Missing backup container"}
 	}
 
-	cmd := []string{"borg --log-json info --error --json"}
-	//cmd = append(cmd, r.repoPath())
+	cmd := []string{"borg --log-json"}
+	cmd = append(cmd, "--lock-wait "+viper.GetString("backups.borg.lock_wait"))
+	cmd = append(cmd, "info --error --json")
 
 	_, response, logMsg := r.ExecWithLog(cmd)
 
@@ -119,8 +121,9 @@ func (r *Repository) Contents() (RepositoryContentResponse, *LogMessage) {
 		return RepositoryContentResponse{}, &LogMessage{Message: "Missing backup container"}
 	}
 
-	cmd := []string{"borg --log-json list --error --json"}
-	//cmd = append(cmd, r.repoPath())
+	cmd := []string{"borg --log-json"}
+	cmd = append(cmd, "--lock-wait "+viper.GetString("backups.borg.lock_wait"))
+	cmd = append(cmd, "list --error --json")
 
 	_, response, logMsg := r.ExecWithLog(cmd)
 
@@ -165,13 +168,14 @@ func (r *Repository) Prune() *LogMessage {
 		}
 	}
 
-	cmd := []string{"borg --log-json prune --error --stats --prefix=\"auto-\""}
+	cmd := []string{"borg --log-json"}
+	cmd = append(cmd, "--lock-wait "+viper.GetString("backups.borg.lock_wait"))
+	cmd = append(cmd, "prune --error --stats --prefix=\"auto-\"")
 	cmd = append(cmd, "--keep-hourly="+strconv.Itoa(r.Retention.Hourly))
 	cmd = append(cmd, "--keep-daily="+strconv.Itoa(r.Retention.Daily))
 	cmd = append(cmd, "--keep-weekly="+strconv.Itoa(r.Retention.Weekly))
 	cmd = append(cmd, "--keep-monthly="+strconv.Itoa(r.Retention.Monthly))
 	cmd = append(cmd, "--keep-yearly="+strconv.Itoa(r.Retention.Annually))
-	//cmd = append(cmd, r.repoPath())
 
 	if _, _, log := r.ExecWithLog(cmd); log != (LogMessage{}) {
 		return &log
@@ -237,8 +241,7 @@ func (r *Repository) repoPath() string {
 		sshHost := viper.GetString("backups.borg.ssh.host")
 		sshPort := viper.GetString("backups.borg.ssh.port")
 		hostPath := viper.GetString("backups.borg.ssh.host_path")
-		fullPath := "ssh://" + sshUser + "@" + sshHost + ":" + sshPort + hostPath + "/" + r.Name
-		borgLogger().Debug("Repository Path", "repository", r.Name, "path", fullPath)
+		fullPath := "ssh://" + sshUser + "@" + sshHost + ":" + sshPort + hostPath + "/b-" + r.Name + "/backup"
 		return fullPath
 	} else {
 		return "/mnt/borg/backup"

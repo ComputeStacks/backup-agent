@@ -30,7 +30,9 @@ func (a *Archive) Create() (ArchiveMessage, *LogMessage) {
 		return borgResponse, &log
 	}
 
-	backupCmd := []string{"cd /mnt/data && borg --log-json create --error --one-file-system --json --numeric-ids --exclude-caches"}
+	backupCmd := []string{"cd /mnt/data && borg --log-json"}
+	backupCmd = append(backupCmd, "--lock-wait "+viper.GetString("backups.borg.lock_wait"))
+	backupCmd = append(backupCmd, "create --error --one-file-system --json --numeric-ids --exclude-caches")
 	backupCmd = append(backupCmd, "--compression "+viper.GetString("backups.borg.compression"))
 	backupCmd = append(backupCmd, a.archivePath())
 	backupCmd = append(backupCmd, ".")
@@ -73,7 +75,9 @@ func (a *Archive) Restore(filePaths []string) *LogMessage {
 	}
 
 	// Perform Restore
-	cmd := []string{"cd /mnt/data && borg --log-json extract --error --numeric-ids"}
+	cmd := []string{"cd /mnt/data && borg --log-json"}
+	cmd = append(cmd, "--lock-wait "+viper.GetString("backups.borg.lock_wait"))
+	cmd = append(cmd, "extract --error --numeric-ids")
 	cmd = append(cmd, a.archivePath())
 	for _, p := range filePaths {
 		cmd = append(cmd, p)
@@ -101,7 +105,9 @@ func (a *Archive) Info() (*ArchiveResponse, *LogMessage) {
 	}
 	var archiveResponse ArchiveResponse
 
-	cmd := []string{"borg --log-json info --error --json"}
+	cmd := []string{"borg --log-json"}
+	cmd = append(cmd, "--lock-wait "+viper.GetString("backups.borg.lock_wait"))
+	cmd = append(cmd, "info --error --json")
 	cmd = append(cmd, a.archivePath())
 
 	_, response, log := a.Repository.ExecWithLog(cmd)
@@ -129,7 +135,9 @@ func (a *Archive) Delete() ([]LogMessage, *LogMessage) {
 		return results, &LogMessage{Message: "Missing backup container"}
 	}
 
-	cmd := []string{"borg --log-json --error delete --stats --force"}
+	cmd := []string{"borg --log-json --error"}
+	cmd = append(cmd, "--lock-wait "+viper.GetString("backups.borg.lock_wait"))
+	cmd = append(cmd, "delete --stats --force")
 	cmd = append(cmd, a.archivePath())
 
 	borgLogger().Debug("Raw Delete Command", "cmd", strings.Join(cmd, " "))

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.1
+
+* [CHANGE] make --lock-wait configurable in the yaml file.
+
+***
+
 ## 1.4.0
 
 * [FEATURE] Support backing up over SSH as an alternative to NFS.

@@ -48,7 +48,8 @@ backups:
       timeout: 60 # In seconds, how long to wait while attempting to grab global lock.
   borg:
     compress: "zstd,3"
-    image: "ghcr.io/computestacks/cs-docker-borg:latest"
+    image: "ghcr.io/computestacks/cs-docker-borg:1.4"
+    lock_wait: 1 # wait at most SECONDS for acquiring a repository/cache lock
 
     ##
     # SSH
