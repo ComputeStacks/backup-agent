@@ -24,7 +24,7 @@ func preRestoreMysql(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.
 	preRestoreCmd = append(preRestoreCmd, "mkdir", "-p /root/.snapshot")
 	preRestoreCmd = append(preRestoreCmd, "&&", "mv", "/mnt/data/* /root/.snapshot/")
 
-	execCmd = append(execCmd, "ash", "-c", strings.Join(preRestoreCmd, " "))
+	execCmd = append(execCmd, "sh", "-c", strings.Join(preRestoreCmd, " "))
 
 	exitCode, _, err := repo.Container.Exec(execCmd, event)
 
@@ -52,7 +52,7 @@ func postRestoreMysql(event *csevent.ProjectEvent, repo *borg.Repository) bool {
 	postRestoreCmd = append(postRestoreCmd, "&&", "rm", "-rf /mnt/data/*")
 	postRestoreCmd = append(postRestoreCmd, "&&", "mv", "/root/.staging/backups/* /mnt/data/")
 
-	execCmd = append(execCmd, "ash", "-c", strings.Join(postRestoreCmd, " "))
+	execCmd = append(execCmd, "sh", "-c", strings.Join(postRestoreCmd, " "))
 
 	exitCode, _, err := repo.Container.Exec(execCmd, event)
 
@@ -75,7 +75,7 @@ func rollbackRestoreMysql(event *csevent.ProjectEvent, repo *borg.Repository) bo
 	rollbackCmd = append(rollbackCmd, "&&", "mv", "/root/.snapshot/* /mnt/data/")
 	rollbackCmd = append(rollbackCmd, "&&", "rm", "-rf /mnt/data/backups")
 
-	execCmd = append(execCmd, "ash", "-c", strings.Join(rollbackCmd, " "))
+	execCmd = append(execCmd, "sh", "-c", strings.Join(rollbackCmd, " "))
 
 	exitCode, _, err := repo.Container.Exec(execCmd, event)
 

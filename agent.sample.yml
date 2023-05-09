@@ -60,7 +60,7 @@ backups:
       port: 22
 
       # MUST be inside the path `/etc/computestacks` on the host.
-      keyfile: "/etc/computestacks/backup/.ssh/id_ed25519"
+      keyfile: "/etc/computestacks/.ssh/id_ed25519"
 
       # Must be absolute and start with a '/', and NOT have a trailing `/`.
       host_path: "/mnt/data/backups"

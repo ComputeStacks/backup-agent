@@ -63,17 +63,18 @@ func Restore(consul *consulAPI.Client, job *types.Job) {
 
 	defer projectEvent.CloseEvent()
 
-	// Sanity check to ensure we should perform the backup
+	// Sanity check to ensure we should perform the restore
 	if destVol.Node != hostname {
 		backupLogger().Info("Halting restore job because destination volume is not under my control", "volume", job.VolumeName, "source_volume", job.SourceVolumeName)
+		projectEvent.EventLog.Status = "failed"
 		projectEvent.PostEventUpdate("agent-806c0cc330c2ea4d", "Halting restore job because destination volume is not under my control.")
 		return
 	}
 
-	// Sanity check to ensure we should perform the backup
-	if !viper.GetBool("backups.borg.nfs") {
+	if !viper.GetBool("backups.borg.nfs") && !viper.GetBool("backups.borg.ssh.enabled") {
 		if vol.Node != hostname {
 			backupLogger().Info("Halting restore job because source volume is not accessible on host", "volume", job.VolumeName, "source_volume", job.SourceVolumeName)
+			projectEvent.EventLog.Status = "failed"
 			projectEvent.PostEventUpdate("agent-bfba3466b03d45e8", "Halting restore job because source volume is not accessible on host.")
 			return
 		}
@@ -81,6 +82,7 @@ func Restore(consul *consulAPI.Client, job *types.Job) {
 
 	if job.ArchiveName == "" {
 		backupLogger().Warn("Error restoring volume, missing archive name", "volume", job.VolumeName, "source_volume", job.SourceVolumeName)
+		projectEvent.EventLog.Status = "failed"
 		projectEvent.PostEventUpdate("agent-548b1d752057add0", "Failed to restore volume due to missing backup name.")
 		return
 	}
@@ -88,9 +90,33 @@ func Restore(consul *consulAPI.Client, job *types.Job) {
 	repo, findRepoErr := borg.FindRepository(&destVol, &vol)
 
 	if findRepoErr != nil {
-		backupLogger().Warn("Error Restoring volume.", "volume", job.VolumeName, "source_volume", job.SourceVolumeName, "error", findRepoErr.Message)
-		projectEvent.PostEventUpdate("agent-81023b3bc0541171", findRepoErr.ToYaml())
-		return
+		// Can't restore from an empty repository.
+		if &destVol.Name == &vol.Name {
+			backupLogger().Warn("Error Restoring volume", "volume", job.VolumeName, "source_volume", job.SourceVolumeName, "error", findRepoErr.Message)
+			projectEvent.EventLog.Status = "failed"
+			projectEvent.PostEventUpdate("agent-81023b3bc0541171", findRepoErr.ToYaml())
+			return
+		}
+
+		// For SSH-backed repositories, we may need to first create the repository.
+		if findRepoErr.MsgID == "Repository.DoesNotExist" && viper.GetBool("backups.borg.ssh.enabled") {
+			// Empty SSH repos return 'InvalidRepository' rather than 'DoesNotExist'.
+			repo = &borg.Repository{Name: vol.Name}
+			// Build backup container
+			repoErr := repo.Setup(&destVol, &vol)
+			if repoErr != nil {
+				backupLogger().Warn("Error Setting up repo for volume restore", "volume", job.VolumeName, "source_volume", job.SourceVolumeName, "error", repoErr.Message)
+				projectEvent.EventLog.Status = "failed"
+				projectEvent.PostEventUpdate("agent-ea3613609e732d68", repoErr.ToYaml())
+				projectEvent.CloseEvent()
+				return
+			}
+		} else {
+			backupLogger().Warn("Error Restoring volume", "volume", job.VolumeName, "source_volume", job.SourceVolumeName, "error", findRepoErr.Message)
+			projectEvent.EventLog.Status = "failed"
+			projectEvent.PostEventUpdate("agent-2e2a3156b8e2ffd2", findRepoErr.ToYaml())
+			return
+		}
 	}
 
 	defer repo.StopContainer()
@@ -98,7 +124,8 @@ func Restore(consul *consulAPI.Client, job *types.Job) {
 	archive, findArchiveErr := repo.FindArchive(job.ArchiveName)
 
 	if findArchiveErr != nil {
-		backupLogger().Warn("Error Restoring volume.", "volume", job.VolumeName, "source_volume", job.SourceVolumeName, "error", findArchiveErr.Message)
+		backupLogger().Warn("Error Restoring volume", "volume", job.VolumeName, "source_volume", job.SourceVolumeName, "error", findArchiveErr.Message)
+		projectEvent.EventLog.Status = "failed"
 		projectEvent.PostEventUpdate("agent-7d32bd2230b39408", findArchiveErr.ToYaml())
 		repo.StopContainer()
 		return
@@ -107,6 +134,7 @@ func Restore(consul *consulAPI.Client, job *types.Job) {
 	cli, restoreDockerErr := client.NewClientWithOpts(client.WithVersion(viper.GetString("docker.version")))
 	if restoreDockerErr != nil {
 		backupLogger().Warn("Failed to connect to docker", "error", restoreDockerErr.Error(), "function", "Restore")
+		projectEvent.EventLog.Status = "failed"
 		projectEvent.PostEventUpdate("agent-05297a0a0438a5bf", restoreDockerErr.Error())
 		repo.StopContainer()
 		return
@@ -115,6 +143,7 @@ func Restore(consul *consulAPI.Client, job *types.Job) {
 
 	if findAllErr != nil {
 		backupLogger().Warn("Failed to retrieve containers", "error", findAllErr.Error(), "function", "Restore")
+		projectEvent.EventLog.Status = "failed"
 		projectEvent.PostEventUpdate("agent-dc1ec275fcf91a6c", findAllErr.Error())
 		repo.StopContainer()
 		return

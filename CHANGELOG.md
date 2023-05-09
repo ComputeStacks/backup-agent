@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.2
+
+* [FIX] Resolve issue that prevented cloning from an ssh target.
+* [FIX] Fix cleaning up the backup folder when backing up MariaDB and MySQL containers.
+
+***
+
 ## 1.4.1
 
 * [CHANGE] make --lock-wait configurable in the yaml file.

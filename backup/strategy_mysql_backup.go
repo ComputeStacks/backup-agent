@@ -65,7 +65,7 @@ func postBackupMysql(event *csevent.ProjectEvent, repo *borg.Repository) bool {
 	var postBackupCmd []string
 	var execCmd []string
 	postBackupCmd = append(postBackupCmd, "rm -rf", "/mnt/data/backups")
-	execCmd = append(execCmd, "ash", "-c", strings.Join(postBackupCmd, " "))
+	execCmd = append(execCmd, "sh", "-c", strings.Join(postBackupCmd, " "))
 
 	exitCode, _, err := repo.Container.Exec(execCmd, event)
 

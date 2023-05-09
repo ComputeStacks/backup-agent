@@ -157,7 +157,7 @@ func (r *Repository) ExecWithLog(cmd []string) (exitCode int, response string, l
 	if reflect.ValueOf(r.Container).IsNil() {
 		return 99, "", LogMessage{Message: "Missing backup container"}
 	}
-	execCmd := []string{"bash", "-c", strings.Join(cmd, " ")}
+	execCmd := []string{"sh", "-c", strings.Join(cmd, " ")}
 	exitCode, response, err := r.Container.Exec(execCmd, nil)
 
 	if err != nil {
