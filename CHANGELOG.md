@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.0
+
+* [FEATURE] Support creating iptable rules for linux bridges.
+
+***
+
 ## 1.4.2
 
 * [FIX] Resolve issue that prevented cloning from an ssh target.

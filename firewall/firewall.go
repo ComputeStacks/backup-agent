@@ -16,6 +16,7 @@ func Perform(consul *consulAPI.Client) {
 	}
 	// Gather current rules
 	currentRules := hostIPTableRules()
+	currentForwardRules := hostForwardIPTableRules()
 
 	// Loop through current rules
 	// 	* Check if rule exists in expected rules
@@ -23,6 +24,11 @@ func Perform(consul *consulAPI.Client) {
 	for _, l := range currentRules {
 		if !expectedRules.ruleExists(l) {
 			deleteHostRule(l)
+		}
+	}
+	for _, l := range currentForwardRules {
+		if !expectedRules.forwardRuleExists(l) {
+			deleteForwardHostRule(l)
 		}
 	}
 
@@ -33,6 +39,9 @@ func Perform(consul *consulAPI.Client) {
 		if !r.hostRuleExists(currentRules) {
 			r.apply()
 		}
+		if !r.forwardHostRuleExists(currentForwardRules) {
+			r.applyForwardRule()
+		}
 	}
 
 }
@@ -41,5 +50,3 @@ func Perform(consul *consulAPI.Client) {
 func csFirewallLog() hclog.Logger {
 	return log.New().Named("cs-firewall")
 }
-
-

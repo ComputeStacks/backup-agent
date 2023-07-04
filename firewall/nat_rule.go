@@ -10,14 +10,15 @@ import (
 )
 
 type NatRules struct {
-	Rules    []NatRule `json:"rules"`
+	Rules []NatRule `json:"rules"`
 }
 
 type NatRule struct {
-	Proto string `json:"proto"`
-	Nat   int    `json:"nat"`
-	Port  int    `json:"port"`
-	Dest  string `json:"dest"`
+	Proto  string `json:"proto"`
+	Nat    int    `json:"nat"`
+	Port   int    `json:"port"`
+	Dest   string `json:"dest"`
+	Driver string `json:"driver"` // calico_docker bridge
 }
 
 func loadExpectedRules(consul *consulAPI.Client) (rules *NatRules, err error) {
@@ -46,11 +47,11 @@ func loadExpectedRules(consul *consulAPI.Client) (rules *NatRules, err error) {
 
 func (r *NatRule) apply() {
 	iptableCmd := "iptables -t nat -A " + r.iptableRule()
-	csFirewallLog().Info("Adding Rule", "rule", iptableCmd)
+	csFirewallLog().Info("Adding NAT Rule", "rule", iptableCmd)
 	cmd := exec.Command("bash", "-c", iptableCmd)
 	output, _ := cmd.CombinedOutput()
 	if string(output) != "" {
-		csFirewallLog().Debug("Add Host Rule", "result", string(output))
+		csFirewallLog().Debug("Add Nat Host Rule", "result", string(output))
 	}
 	return
 }
@@ -59,6 +60,7 @@ func (r *NatRule) iptableRule() string {
 	return "expose-ports -p " + r.Proto + " -m " + r.Proto + " --dport " + strconv.Itoa(r.Nat) + " -j DNAT --to-destination " + r.Dest + ":" + strconv.Itoa(r.Port)
 }
 
+// Provide a list of expected rules for this node
 func (r *NatRule) hostRuleExists(existingRules []string) bool {
 	for _, l := range existingRules {
 		if "-A "+r.iptableRule() == l {
@@ -68,6 +70,7 @@ func (r *NatRule) hostRuleExists(existingRules []string) bool {
 	return false
 }
 
+// Given a set of expected rules, determine if a rule should exist.
 func (r *NatRules) ruleExists(line string) bool {
 	for _, rule := range r.Rules {
 		if "-A "+rule.iptableRule() == line {
