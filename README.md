@@ -6,19 +6,10 @@ This agent runs on each node and uses consul as it's database backend. It curren
 * Creates firewall rules for container services
 * Performs volume restores
 
-## Upgrading
-
-To upgrade your backup agent:
+## Running
 
 ```bash
-systemctl stop cs-agent
-cd /tmp && wget https://f.cscdn.cc/file/cstackscdn/packages/cs-agent/cs-agent.tar.gz
-tar -xzvf cs-agent.tar.gz
-rm -f /usr/local/bin/cs-agent
-mv cs-agent /usr/local/bin/
-chown root:root /usr/local/bin/cs-agent && chmod +x /usr/local/bin/cs-agent
-rm -rf /tmp/cs-agent*
-systemctl daemon-reload && systemctl start cs-agent
+docker run -d --init --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/computestacks:/etc/computestacks:ro --name cs-agent cs-agent:latest
 ```
 
 ## Development
