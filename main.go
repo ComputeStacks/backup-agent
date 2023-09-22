@@ -1,29 +1,3 @@
-/**
-
-TODO: Reporting
-	- Report SystemEvents on errors
-
-	CS Event Log Codes: `echo agent-$(openssl rand -hex 8) | tr -d '\n' | pbcopy`
-
-TODO: Store work state in consul
-	- Ensure that backup and restore jobs don't take place while another job is actively
-      running. Create a queue in consul called `borg/work/<volume-id>`. Only allow 1 job at a time.
-    - The schema for the work queue could be something like:
-		```yaml
-		# /borg/work/abcdef-adfgwef-...-efsdf
-		job: backup.create
-		jid: jobID # For queued up work, use this to determine who's turn it is to work!
-		started: Time-as-int
-		queue: []job # or not? just leave the original job alone until this is gone.
-		```
-		once the work is done, begin to work through the queue.
-
-TODO: Determine proper way of cleaning up jobs and volume data in consul if they no longer exist on the node.
-
-TODO: Handle worker processes that die and kill the entire app.
-
-*/
-
 package main
 
 import (
@@ -42,7 +16,7 @@ import (
 
 func main() {
 	var wg sync.WaitGroup
-	v := "1.5.0"
+	v := "1.5.1"
 	configureApp()
 	configureSentry(v)
 	ensureConsulReady()
@@ -79,6 +53,11 @@ func configureApp() {
 	// Defaults
 	viper.SetDefault("log.level", "INFO")
 	viper.SetDefault("sentry.dsn", "https://caf0e228c0dc4c36a4b4972cc2c0eba2@sentry.cmptstks.com/3")
+
+	////
+	// Specify which iptables command to use
+	// For docker environments using the older legacy iptables, switch to: iptables-legacy
+	viper.SetDefault("host.iptables-cmd", "iptables")
 
 	// For testing purposes only, dont set `true` in production environments.
 	viper.SetDefault("docker.privileged", false)

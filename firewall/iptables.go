@@ -1,6 +1,8 @@
 package firewall
 
 import (
+	"fmt"
+	"github.com/spf13/viper"
 	"os/exec"
 	"strings"
 )
@@ -13,7 +15,7 @@ type IPTableRule struct {
 }
 
 func hostIPTableRules() (rules []string) {
-	cmd := exec.Command("bash", "-c", "iptables-save | grep '\\-A expose-ports'")
+	cmd := exec.Command("bash", "-c", iptablesSaveCmd()+" | grep '\\-A expose-ports'")
 	output, _ := cmd.CombinedOutput()
 	if string(output) == "" {
 		return []string{}
@@ -28,7 +30,7 @@ func hostIPTableRules() (rules []string) {
 }
 
 func hostForwardIPTableRules() (rules []string) {
-	cmd := exec.Command("bash", "-c", "iptables-save | grep '\\-A container-inbound'")
+	cmd := exec.Command("bash", "-c", iptablesSaveCmd()+" | grep '\\-A container-inbound'")
 	output, _ := cmd.CombinedOutput()
 	if string(output) == "" {
 		return []string{}
@@ -45,7 +47,10 @@ func hostForwardIPTableRules() (rules []string) {
 func deleteHostRule(line string) {
 	l := strings.ReplaceAll(line, "-A", "-D")
 	csFirewallLog().Info("Deleting Nat Rule", "rule", l)
-	cmd := exec.Command("bash", "-c", "iptables -t nat "+l)
+
+	execCmd := fmt.Sprintf("%s -t nat %s", iptablesCmd(), l)
+	cmd := exec.Command("bash", "-c", execCmd)
+
 	output, _ := cmd.CombinedOutput()
 	if string(output) == "" {
 		return
@@ -56,10 +61,27 @@ func deleteHostRule(line string) {
 func deleteForwardHostRule(line string) {
 	l := strings.ReplaceAll(line, "-A", "-D")
 	csFirewallLog().Info("Deleting Forward Rule", "rule", l)
-	cmd := exec.Command("bash", "-c", "iptables "+l)
+
+	execCmd := fmt.Sprintf("%s %s", iptablesCmd(), l)
+	cmd := exec.Command("bash", "-c", execCmd)
+
 	output, _ := cmd.CombinedOutput()
 	if string(output) == "" {
 		return
 	}
 	return
+}
+
+func iptablesCmd() string {
+	if viper.GetString("host.iptables-cmd") == "iptables-legacy" {
+		return "iptables-legacy"
+	}
+	return "iptables"
+}
+
+func iptablesSaveCmd() string {
+	if viper.GetString("host.iptables-cmd") == "iptables-legacy" {
+		return "iptables-legacy-save"
+	}
+	return "iptables-save"
 }

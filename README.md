@@ -9,7 +9,12 @@ This agent runs on each node and uses consul as it's database backend. It curren
 ## Running
 
 ```bash
-docker run -d --init --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/computestacks:/etc/computestacks:ro --name cs-agent cs-agent:latest
+docker run -d --name cs-agent --init \
+  --network host \
+  --cap-add=NET_ADMIN \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /etc/computestacks:/etc/computestacks:ro \
+  ghcr.io/computestacks/backup-agent:latest
 ```
 
 ## Development

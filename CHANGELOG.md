@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.1
+
+* [CHANGE] Our agent will now run inside of a container by default.
+
+***
+
 ## 1.5.0
 
 * [FEATURE] Support creating iptable rules for linux bridges.

@@ -1,6 +1,7 @@
 package firewall
 
 import (
+	"fmt"
 	"os/exec"
 	"strconv"
 )
@@ -9,9 +10,11 @@ func (r *NatRule) applyForwardRule() {
 	if r.Driver == "calico-node" {
 		return
 	}
-	iptableCmd := "iptables -A " + r.forwardRule()
-	csFirewallLog().Info("Adding Forward Rule", "rule", iptableCmd)
-	cmd := exec.Command("bash", "-c", iptableCmd)
+
+	execCmd := fmt.Sprintf("%s -A %s", iptablesCmd(), r.forwardRule())
+	csFirewallLog().Info("Adding Forward Rule", "rule", execCmd)
+
+	cmd := exec.Command("bash", "-c", execCmd)
 	output, _ := cmd.CombinedOutput()
 	if string(output) != "" {
 		csFirewallLog().Debug("Add Forward Host Rule", "result", string(output))

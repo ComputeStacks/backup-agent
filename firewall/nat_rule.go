@@ -2,6 +2,7 @@ package firewall
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/getsentry/sentry-go"
 	consulAPI "github.com/hashicorp/consul/api"
 	"os"
@@ -46,9 +47,10 @@ func loadExpectedRules(consul *consulAPI.Client) (rules *NatRules, err error) {
 }
 
 func (r *NatRule) apply() {
-	iptableCmd := "iptables -t nat -A " + r.iptableRule()
-	csFirewallLog().Info("Adding NAT Rule", "rule", iptableCmd)
-	cmd := exec.Command("bash", "-c", iptableCmd)
+	execCmd := fmt.Sprintf("%s -t nat -A %s", iptablesCmd(), r.iptableRule())
+	csFirewallLog().Info("Adding NAT Rule", "rule", execCmd)
+	cmd := exec.Command("bash", "-c", execCmd)
+
 	output, _ := cmd.CombinedOutput()
 	if string(output) != "" {
 		csFirewallLog().Debug("Add Nat Host Rule", "result", string(output))

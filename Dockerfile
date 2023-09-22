@@ -9,7 +9,15 @@ COPY . ./
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /cs-agent
 
-FROM gcr.io/distroless/static-debian12 AS build-release-stage
+FROM debian:bookworm-slim AS build-release-stage
+
+RUN set -ex; \
+    \
+    apt-get update; \
+    apt-get install -y --no-install-recommends iptables nftables \
+    ; \
+    apt-get clean \
+      && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /
 

@@ -58,7 +58,7 @@ func New(projectID int, volumeIds []int, eventCode string, locale string, audit 
 	jsonData, _ := json.Marshal(event)
 	response, err := post("/api/system/events", jsonData)
 	/**
-	It's more important to perform the backup then to create an event log
+	It's more important to perform the backup than to create an event log
 	in ComputeStacks. For most errors (except JSON unmarshal errors), just return
 	a `ProjectEvent` with an ID of 0.
 	*/
