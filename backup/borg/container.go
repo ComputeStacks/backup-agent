@@ -86,16 +86,18 @@ func (r *Repository) InitBackupContainer(vol *types.Volume, source *types.Volume
 		Privileged:  viper.GetBool("docker.privileged"),
 	}
 
+	hostConfig.Mounts = append(hostConfig.Mounts, mount.Mount{
+		Type:     mount.TypeBind,
+		Source:   "/etc/computestacks",
+		ReadOnly: true,
+		Target:   "/etc/computestacks",
+	})
+
+	hostConfig.NetworkMode = "host"
+
 	if viper.GetBool("backups.borg.ssh.enabled") {
-		hostConfig.Mounts = append(hostConfig.Mounts, mount.Mount{
-			Type:     mount.TypeBind,
-			Source:   "/etc/computestacks",
-			ReadOnly: true,
-			Target:   "/etc/computestacks",
-		})
 		borgEnv = append(borgEnv, "BORG_REMOTE_PATH="+viper.GetString("backups.borg.ssh_borg_remote_path"))
 		borgEnv = append(borgEnv, "BORG_RSH=ssh -i "+viper.GetString("backups.borg.ssh.keyfile"))
-		hostConfig.NetworkMode = "host"
 	}
 
 	hostConfig.Mounts = append(hostConfig.Mounts, mount.Mount{
