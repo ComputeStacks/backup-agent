@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.2
+
+* [CHANGE] Include ssl in the docker image.
+
+***
+
 ## 1.5.1
 
 * [CHANGE] Our agent will now run inside of a container by default.
