@@ -5,6 +5,7 @@ import (
 	"context"
 	"cs-agent/csevent"
 	"errors"
+	"github.com/docker/docker/api/types/container"
 	"reflect"
 	"strconv"
 	"strings"
@@ -116,8 +117,8 @@ func (c *Container) Stop() bool {
 		return false
 	}
 	ctx := context.Background()
-	timeout := time.Duration(15)
-	if containerStopError := cli.ContainerStop(ctx, c.ID, &timeout); containerStopError != nil {
+	timeout := 15
+	if containerStopError := cli.ContainerStop(ctx, c.ID, container.StopOptions{Timeout: &timeout}); containerStopError != nil {
 		if strings.Contains(containerStopError.Error(), "no such container") {
 			return true
 		}

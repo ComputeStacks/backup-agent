@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.0
+
+* [CHANGE] Bump dependencies to new major versions.
+* [CHANGE] Support for Mariadb 11.
+
 ## 1.5.2
 
 * [CHANGE] Include ssl in the docker image.

@@ -85,7 +85,15 @@ func postBackupMysql(event *csevent.ProjectEvent, repo *borg.Repository) bool {
 func isMysqlReady(backupContainer *containermgr.Container, mysqlMaster *MysqlInstance, event *csevent.ProjectEvent) bool {
 	var readyCmd []string
 	var execCmd []string
-	readyCmd = append(readyCmd, "counter=0; while ! mysql -h", mysqlMaster.IPAddress, "-uroot", "-p"+mysqlMaster.Password, "-e \"STATUS;\"", "&>/dev/null; do counter=$((counter+1)); if [ $counter == 11 ]; then echo 'Failed to connect'; exit 1; fi; echo \"Connection attempt $counter\"; sleep 5; done;")
+	mysqlBinary := "mysql"
+
+	if mysqlMaster.Variant == "mariadb" {
+		if mysqlMaster.Version.Major > 10 {
+			mysqlBinary = "mariadb"
+		}
+	}
+
+	readyCmd = append(readyCmd, "counter=0; while ! ", mysqlBinary, " -h", mysqlMaster.IPAddress, "-uroot", "-p"+mysqlMaster.Password, "-e \"STATUS;\"", "&>/dev/null; do counter=$((counter+1)); if [ $counter == 11 ]; then echo 'Failed to connect'; exit 1; fi; echo \"Connection attempt $counter\"; sleep 5; done;")
 	readyCmd = append(readyCmd, "if [ -d "+mysqlMaster.DataPath+"/backups ]; then rm -rf "+mysqlMaster.DataPath+"/backups; fi") // Ensure the backups dir does not exist, otherwise backups will fail.
 
 	execCmd = append(execCmd, "bash", "-c", strings.Join(readyCmd, " "))
@@ -110,10 +118,14 @@ func isMysqlReady(backupContainer *containermgr.Container, mysqlMaster *MysqlIns
 func backupMysql(backupContainer *containermgr.Container, mysqlMaster *MysqlInstance, event *csevent.ProjectEvent) bool {
 	var backupCmd []string
 
-	backupExec := "xtrabackup"
+	backupBinary := "xtrabackup"
 
 	if mysqlMaster.Variant == "mariadb" || mysqlMaster.Variant == "bitnami-mariadb" {
-		backupExec = "mariabackup"
+		if mysqlMaster.Version.Major > 10 {
+			backupBinary = "mariadb-backup"
+		} else {
+			backupBinary = "mariabackup"
+		}
 	}
 
 	mariaLongTimeout := viper.GetString("mariadb.long_queries.timeout")
@@ -121,7 +133,7 @@ func backupMysql(backupContainer *containermgr.Container, mysqlMaster *MysqlInst
 	mariaWaitQueryType := viper.GetString("mariadb.lock_wait.query_type")
 	mariaWaitTimeout := viper.GetString("mariadb.lock_wait.timeout")
 
-	backupCmd = append(backupCmd, backupExec, "--backup", "--datadir="+mysqlMaster.DataPath, "--port=3306")
+	backupCmd = append(backupCmd, backupBinary, "--backup", "--datadir="+mysqlMaster.DataPath, "--port=3306")
 	backupCmd = append(backupCmd, "--target-dir="+mysqlMaster.DataPath+"/backups")
 	backupCmd = append(backupCmd, "--user="+mysqlMaster.Username)
 	backupCmd = append(backupCmd, "--password="+mysqlMaster.Password)
@@ -154,13 +166,17 @@ func backupMysql(backupContainer *containermgr.Container, mysqlMaster *MysqlInst
 func prepareMysqlBackup(backupContainer *containermgr.Container, mysqlMaster *MysqlInstance, event *csevent.ProjectEvent) bool {
 	var backupPrepareCmd []string
 
-	backupExec := "xtrabackup"
+	backupBinary := "xtrabackup"
 
 	if mysqlMaster.Variant == "mariadb" || mysqlMaster.Variant == "bitnami-mariadb" {
-		backupExec = "mariabackup"
+		if mysqlMaster.Version.Major > 10 {
+			backupBinary = "mariadb-backup"
+		} else {
+			backupBinary = "mariabackup"
+		}
 	}
 
-	backupPrepareCmd = append(backupPrepareCmd, backupExec, "--prepare", "--target-dir="+mysqlMaster.DataPath+"/backups")
+	backupPrepareCmd = append(backupPrepareCmd, backupBinary, "--prepare", "--target-dir="+mysqlMaster.DataPath+"/backups")
 
 	exitCode, _, err := backupContainer.Exec(backupPrepareCmd, event)
 

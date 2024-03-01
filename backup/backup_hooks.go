@@ -5,8 +5,7 @@ import (
 	"cs-agent/containermgr"
 	"cs-agent/csevent"
 	"cs-agent/types"
-	"cs-agent/utils"
-	"reflect"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -20,8 +19,7 @@ func preBackup(vol *types.Volume, event *csevent.ProjectEvent) (preBackupSuccess
 		success := false
 		defer func() (preBackupSuccess bool) {
 			if r := recover(); r != nil {
-				r := reflect.ValueOf(r)
-				go event.PostEventUpdate("agent-98840575b7f423c4", utils.RecoverErrorToString(r))
+				go event.PostEventUpdate("agent-98840575b7f423c4", fmt.Sprintf("%#v", r))
 				return false
 			}
 			return success
@@ -64,8 +62,7 @@ func postBackup(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.Repos
 	if len(vol.PostBackup) > 2 {
 		defer func() {
 			if r := recover(); r != nil {
-				r := reflect.ValueOf(r)
-				go event.PostEventUpdate("agent-b400393269184c12", utils.RecoverErrorToString(r))
+				go event.PostEventUpdate("agent-b400393269184c12", fmt.Sprintf("%#v", r))
 				return
 			}
 		}()

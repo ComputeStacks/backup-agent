@@ -1,6 +1,5 @@
+// Package backup
 /*
-*
-
 # Restore Hooks
 
 preRestore will run before the backup is restored to the server, and before the container is
@@ -16,8 +15,7 @@ import (
 	"cs-agent/containermgr"
 	"cs-agent/csevent"
 	"cs-agent/types"
-	"cs-agent/utils"
-	"reflect"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -28,8 +26,7 @@ func preRestore(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.Repos
 		success := false
 		defer func() (preRestoreSuccess bool) {
 			if r := recover(); r != nil {
-				r := reflect.ValueOf(r)
-				go event.PostEventUpdate("agent-cd090c1cc5c19617", utils.RecoverErrorToString(r))
+				go event.PostEventUpdate("agent-cd090c1cc5c19617", fmt.Sprintf("%#v", r))
 				return false
 			}
 			return success
@@ -70,8 +67,7 @@ func postRestore(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.Repo
 	if len(vol.PostRestore) > 2 {
 		defer func() bool {
 			if r := recover(); r != nil {
-				r := reflect.ValueOf(r)
-				go event.PostEventUpdate("agent-b5117962943e98cb", utils.RecoverErrorToString(r))
+				go event.PostEventUpdate("agent-b5117962943e98cb", fmt.Sprintf("%#v", r))
 				return false
 			}
 			return true
@@ -105,8 +101,7 @@ func rollbackRestore(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.
 	if len(vol.PostRestore) > 0 {
 		defer func() bool {
 			if r := recover(); r != nil {
-				r := reflect.ValueOf(r)
-				go event.PostEventUpdate("agent-c290fcc106e4f78a", utils.RecoverErrorToString(r))
+				go event.PostEventUpdate("agent-c290fcc106e4f78a", fmt.Sprintf("%#v", r))
 				return false
 			}
 			return true

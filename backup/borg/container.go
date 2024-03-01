@@ -118,7 +118,7 @@ func (r *Repository) InitBackupContainer(vol *types.Volume, source *types.Volume
 		Image:  viper.GetString("backups.borg.image"),
 		Labels: labels,
 		Env:    borgEnv,
-	}, &hostConfig, nil, containerName)
+	}, &hostConfig, nil, nil, containerName)
 
 	if err != nil {
 		return false, err
@@ -267,7 +267,7 @@ func (r *Repository) ensureBackupVolumeExists(cli *client.Client, vol *types.Vol
 			}
 		}
 
-		opts := volumeTypes.VolumeCreateBody{
+		opts := volumeTypes.CreateOptions{
 			Name:       "b-" + vol.Name,
 			Driver:     "local",
 			DriverOpts: driverOpts,

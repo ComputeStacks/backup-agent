@@ -43,9 +43,9 @@ func Watch(wg *sync.WaitGroup) {
 	ctx, cancel := context.WithCancel(context.Background())
 	backupWorkerCount := viper.GetInt("queue.numworkers") + 1
 	backupQueue := make(chan types.Job)
-	iptableQueue := make(chan types.Job)
+	ipTableQueue := make(chan types.Job)
 	setupWorkers(ctx, wg, consul, "backup", backupWorkerCount, backupQueue)
-	setupWorkers(ctx, wg, consul, "firewall", 1, iptableQueue)
+	setupWorkers(ctx, wg, consul, "firewall", 1, ipTableQueue)
 	captureExit(cancel)
 
 	kvClient := consul.KV()
@@ -84,7 +84,7 @@ WAIT:
 		job.ID = data.Key
 		if hostname == job.Node {
 			if job.Name == "firewall" {
-				iptableQueue <- job
+				ipTableQueue <- job
 			} else {
 				backupQueue <- job
 			}

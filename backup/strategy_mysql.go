@@ -243,7 +243,7 @@ func buildBackupAgent(cli *client.Client, mysqlMaster *MysqlInstance) (*containe
 			},
 		},
 		AutoRemove: true,
-	}, nil, containerName)
+	}, nil, nil, containerName)
 	if err != nil {
 		return nil, err
 	}

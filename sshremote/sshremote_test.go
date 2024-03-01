@@ -16,10 +16,10 @@ func TestMain(m *testing.M) {
 func TestSSHCommandBool(t *testing.T) {
 
 	connInfo := ServerConnInfo{
-		Server: "192.168.173.10",
-		Port: "22",
-		User: "vagrant",
-		Key: SSHPrivateKey,
+		Server: os.Getenv("VAGRANT_IP"),
+		Port:   "22",
+		User:   "vagrant",
+		Key:    SSHPrivateKey,
 	}
 
 	success, exitError := SSHCommandBool("date", connInfo)
@@ -39,10 +39,10 @@ func TestSSHCommandBool(t *testing.T) {
 func TestSSHCommandString(t *testing.T) {
 
 	connInfo := ServerConnInfo{
-		Server: "192.168.173.10",
-		Port: "22",
-		User: "vagrant",
-		Key: SSHPrivateKey,
+		Server: os.Getenv("VAGRANT_IP"),
+		Port:   "22",
+		User:   "vagrant",
+		Key:    SSHPrivateKey,
 	}
 
 	output, exitError := SSHCommandString("whoami", connInfo)
