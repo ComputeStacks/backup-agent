@@ -6,21 +6,19 @@ import (
 	"os"
 
 	"github.com/getsentry/sentry-go"
-	consulAPI "github.com/hashicorp/consul/api"
 )
 
-func prune(consul *consulAPI.Client) {
+func prune(consul types.ConsulKV) {
 	defer sentry.Recover()
 	hostname, _ := os.Hostname()
-	kv := consul.KV()
-	keys, _, err := kv.Keys("volumes", "", nil)
+	keys, _, err := consul.Keys("volumes", "", nil)
 	if err != nil {
 		panic(err)
 	}
 
 	for _, value := range keys {
 
-		pair, _, err := kv.Get(value, nil)
+		pair, _, err := consul.Get(value, nil)
 		if err != nil {
 			panic(err)
 		}

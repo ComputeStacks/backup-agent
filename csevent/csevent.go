@@ -3,7 +3,7 @@ package csevent
 import (
 	"cs-agent/log"
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"reflect"
 	"strconv"
 
@@ -64,7 +64,7 @@ func New(projectID int, volumeIds []int, eventCode string, locale string, audit 
 	*/
 	if err == nil {
 		if response.StatusCode >= 200 && response.StatusCode < 300 {
-			rData, _ := ioutil.ReadAll(response.Body)
+			rData, _ := io.ReadAll(response.Body)
 			jsonErr := json.Unmarshal(rData, &projectEvent)
 			if jsonErr != nil {
 				sentry.CaptureException(jsonErr)

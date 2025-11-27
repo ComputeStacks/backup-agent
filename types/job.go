@@ -24,20 +24,18 @@ func (job *Job) JSONEncode() []byte {
 	return jsonData
 }
 
-func (job *Job) Save(consul *consulAPI.Client) error {
-	kv := consul.KV()
+func (job *Job) Save(consul ConsulKV) error {
 	kp := consulAPI.KVPair{
 		Key:   job.ID, // jobs/jobID
 		Value: job.JSONEncode(),
 	}
-	_, err := kv.Put(&kp, nil)
+	_, err := consul.Put(&kp, nil)
 	return err
 }
 
-func (job *Job) Close(consul *consulAPI.Client) bool {
+func (job *Job) Close(consul ConsulKV) bool {
 	//log.New().Named("worker").Info("Finished job", "job", job.ID)
-	kv := consul.KV()
-	_, err := kv.Delete(job.ID, nil)
+	_, err := consul.Delete(job.ID, nil)
 	if err != nil {
 		log.New().Named("worker").Warn("Fatal error while cleaning up job", "jobID", job.ID, "error", err.Error())
 		sentry.CaptureException(err)

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	dockerTypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	volumeTypes "github.com/docker/docker/api/types/volume"
@@ -43,7 +43,7 @@ func (r *Repository) InitBackupContainer(vol *types.Volume, source *types.Volume
 	// Ensure image exists
 	_, _, missingImage := cli.ImageInspectWithRaw(ctx, viper.GetString("backups.borg.image"))
 	if missingImage != nil {
-		_, err := cli.ImagePull(ctx, viper.GetString("backups.borg.image"), dockerTypes.ImagePullOptions{})
+		_, err := cli.ImagePull(ctx, viper.GetString("backups.borg.image"), image.PullOptions{})
 		if err != nil {
 			borgLogger().Error("Fatal error pulling image", "error", clientErr.Error())
 			return false, err
@@ -124,7 +124,7 @@ func (r *Repository) InitBackupContainer(vol *types.Volume, source *types.Volume
 		return false, err
 	}
 
-	if err := cli.ContainerStart(ctx, resp.ID, dockerTypes.ContainerStartOptions{}); err != nil {
+	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return false, err
 	}
 

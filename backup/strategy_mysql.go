@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	dockerTypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
@@ -193,7 +193,7 @@ func buildBackupAgent(cli *client.Client, mysqlMaster *MysqlInstance) (*containe
 	_, _, missingImage := cli.ImageInspectWithRaw(ctx, mysqlMaster.BackupImage)
 
 	if missingImage != nil {
-		_, err := cli.ImagePull(ctx, mysqlMaster.BackupImage, dockerTypes.ImagePullOptions{})
+		_, err := cli.ImagePull(ctx, mysqlMaster.BackupImage, image.PullOptions{})
 		if err != nil {
 			return nil, err
 		}
@@ -248,7 +248,7 @@ func buildBackupAgent(cli *client.Client, mysqlMaster *MysqlInstance) (*containe
 		return nil, err
 	}
 
-	if err := cli.ContainerStart(ctx, resp.ID, dockerTypes.ContainerStartOptions{}); err != nil {
+	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return nil, err
 	}
 

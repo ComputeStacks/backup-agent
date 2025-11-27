@@ -9,12 +9,13 @@ import (
 	"cs-agent/types"
 	"encoding/json"
 	"fmt"
-	"github.com/spf13/viper"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/spf13/viper"
 
 	"github.com/getsentry/sentry-go"
 	consulAPI "github.com/hashicorp/consul/api"
@@ -51,49 +52,50 @@ func Watch(wg *sync.WaitGroup) {
 	kvClient := consul.KV()
 	opts := &consulAPI.QueryOptions{AllowStale: false}
 	errCount := 0
-WAIT:
-	events, meta, err := kvClient.Keys("jobs", "", opts)
-	if err != nil {
-		jobEvent().Warn("Fatal error loading job list", "error", err.Error())
-		if errCount > 12 {
-			jobEvent().Warn("Error count has reach more than 12, stopping all jobs")
-			return
-		}
-		errCount = errCount + 1
-		time.Sleep(5 * time.Second) // Wait 5 seconds
-		goto WAIT
-	}
-	errCount = 0
-	for _, value := range events {
-		data, _, err := kvClient.Get(value, nil)
-		if err != nil {
-			jobEvent().Warn("Fatal error loading job", "error", err.Error())
-			sentry.CaptureException(err)
-			continue
-		}
-		var job types.Job
-		if data == nil {
-			continue // We can get here if the data was deleted.
-		}
-		err = json.Unmarshal(data.Value, &job)
-		if err != nil {
-			jobEvent().Warn("Fatal error loading job", "jobID", data.Key, "error", err.Error())
-			sentry.CaptureException(err)
-			continue
-		}
-		job.ID = data.Key
-		if hostname == job.Node {
-			if job.Name == "firewall" {
-				ipTableQueue <- job
-			} else {
-				backupQueue <- job
-			}
-			job.Close(consul)
-		}
 
+	for {
+		events, meta, err := kvClient.Keys("jobs", "", opts)
+		if err != nil {
+			jobEvent().Warn("Fatal error loading job list", "error", err.Error())
+			if errCount > 12 {
+				jobEvent().Warn("Error count has reach more than 12, stopping all jobs")
+				return
+			}
+			errCount = errCount + 1
+			time.Sleep(5 * time.Second) // Wait 5 seconds
+			continue
+		}
+		errCount = 0
+		for _, value := range events {
+			data, _, err := kvClient.Get(value, nil)
+			if err != nil {
+				jobEvent().Warn("Fatal error loading job", "error", err.Error())
+				sentry.CaptureException(err)
+				continue
+			}
+			var job types.Job
+			if data == nil {
+				continue // We can get here if the data was deleted.
+			}
+			err = json.Unmarshal(data.Value, &job)
+			if err != nil {
+				jobEvent().Warn("Fatal error loading job", "jobID", data.Key, "error", err.Error())
+				sentry.CaptureException(err)
+				continue
+			}
+			job.ID = data.Key
+			if hostname == job.Node {
+				if job.Name == "firewall" {
+					ipTableQueue <- job
+				} else {
+					backupQueue <- job
+				}
+				job.Close(consul.KV())
+			}
+
+		}
+		opts.WaitIndex = meta.LastIndex
 	}
-	opts.WaitIndex = meta.LastIndex
-	goto WAIT
 	// https://github.com/hashicorp/consul/blob/master/api/lock.go#L357-L384
 }
 
@@ -102,13 +104,7 @@ func processJob(consul *consulAPI.Client, job *types.Job) {
 	jobEvent().Info("Processing job", "job", job.ID, "kind", job.Name)
 	switch job.Name {
 	case "volume.backup":
-		if job.ArchiveName == "" {
-			job.ArchiveName = "manual-m-{utcnow}"
-		} else if job.ArchiveName == "auto" {
-			job.ArchiveName = "auto-{utcnow}"
-		} else {
-			job.ArchiveName = job.ArchiveName + "-m-{utcnow}"
-		}
+		resolveArchiveName(job)
 		_ = backup.Perform(consul, job)
 	case "volume.restore":
 		backup.Restore(consul, job)
@@ -119,7 +115,7 @@ func processJob(consul *consulAPI.Client, job *types.Job) {
 	default:
 		jobEvent().Info("Unknown job", "name", job.Name)
 	}
-	return
+
 }
 
 func jobEvent() hclog.Logger {
@@ -135,4 +131,15 @@ func captureExit(cancel context.CancelFunc) {
 		cancel()
 		os.Exit(0)
 	}()
+}
+
+func resolveArchiveName(job *types.Job) {
+	switch job.ArchiveName {
+	case "":
+		job.ArchiveName = "manual-m-{utcnow}"
+	case "auto":
+		job.ArchiveName = "auto-{utcnow}"
+	default:
+		job.ArchiveName = job.ArchiveName + "-m-{utcnow}"
+	}
 }

@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	dockerTypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 	"github.com/spf13/viper"
@@ -44,7 +43,7 @@ func FindAllByService(cli *client.Client, serviceID string, allowOff bool) (cont
 	findArgs := filters.NewArgs(
 		filters.Arg("label", "com.computestacks.service_id="+serviceID),
 	)
-	findOpts := dockerTypes.ContainerListOptions{
+	findOpts := container.ListOptions{
 		All:     true,
 		Filters: findArgs,
 	}
@@ -153,7 +152,7 @@ func (c *Container) Start() bool {
 		return false
 	}
 	ctx := context.Background()
-	if containerStartError := cli.ContainerStart(ctx, c.ID, dockerTypes.ContainerStartOptions{}); containerStartError != nil {
+	if containerStartError := cli.ContainerStart(ctx, c.ID, container.StartOptions{}); containerStartError != nil {
 		containerLogger().Warn("Error starting backup container", "error", containerStartError.Error(), "backupContainerID", c.ID)
 		return false
 	}
@@ -207,7 +206,7 @@ func (c *Container) Exec(jobCommands []string, event *csevent.ProjectEvent) (exi
 		return 1, "", errors.New("container never came online")
 	}
 
-	execConfig := dockerTypes.ExecConfig{
+	execConfig := container.ExecOptions{
 		Cmd:          jobCommands,
 		Tty:          true,
 		AttachStderr: true,
@@ -221,7 +220,7 @@ func (c *Container) Exec(jobCommands []string, event *csevent.ProjectEvent) (exi
 		return 1, "", err
 	}
 
-	execStartCheck := dockerTypes.ExecStartCheck{
+	execStartCheck := container.ExecStartOptions{
 		Tty: execConfig.Tty,
 	}
 

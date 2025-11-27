@@ -2,33 +2,26 @@ package backup
 
 import (
 	"cs-agent/backup/borg"
-	"cs-agent/cnslclient"
 	"cs-agent/types"
 	"os"
 	"reflect"
 
 	"github.com/getsentry/sentry-go"
 	"github.com/google/uuid"
-	consulAPI "github.com/hashicorp/consul/api"
 	"github.com/robfig/cron/v3"
 	"github.com/spf13/viper"
 )
 
-func InitSchedule(c *cron.Cron) {
+func InitSchedule(consul types.ConsulKV, c *cron.Cron) {
 	backupLogger().Info("Starting backup scheduler")
 	hostname, err := os.Hostname()
 	if err != nil {
 		panic(err)
 	}
 
-	consul, err := cnslclient.Client()
-	if err != nil {
-		panic(err)
-	}
 	// Clear out all existing schedules
-	kv := consul.KV()
 	schedulePath := "borg/nodes/" + hostname + "/schedules"
-	_, _ = kv.DeleteTree(schedulePath, nil)
+	_, _ = consul.DeleteTree(schedulePath, nil)
 	c.Start()
 	scheduleBackup(consul, c)
 	_, err = c.AddFunc(viper.GetString("backups.check_freq"), func() { scheduleBackup(consul, c) })
@@ -46,7 +39,7 @@ func InitSchedule(c *cron.Cron) {
 
 }
 
-func scheduleBackup(consul *consulAPI.Client, c *cron.Cron) {
+func scheduleBackup(consul types.ConsulKV, c *cron.Cron) {
 
 	if reflect.ValueOf(consul).IsNil() {
 		backupLogger().Warn("Consul client has gone away, skipping sequence")
@@ -59,8 +52,7 @@ func scheduleBackup(consul *consulAPI.Client, c *cron.Cron) {
 	}
 
 	hostname, _ := os.Hostname()
-	kv := consul.KV()
-	keys, _, err := kv.Keys("volumes", "", nil)
+	keys, _, err := consul.Keys("volumes", "", nil)
 	if err != nil {
 		backupLogger().Warn("Fatal error getting volume list from consul", "error", err.Error())
 		return
@@ -68,7 +60,7 @@ func scheduleBackup(consul *consulAPI.Client, c *cron.Cron) {
 
 	for _, value := range keys {
 
-		pair, _, err := kv.Get(value, nil)
+		pair, _, err := consul.Get(value, nil)
 		if err != nil {
 			backupLogger().Warn("Fatal error getting volume key from consul", "volumePath", value, "error", err.Error())
 			sentry.CaptureException(err)
@@ -118,7 +110,7 @@ func scheduleBackup(consul *consulAPI.Client, c *cron.Cron) {
 						backupLogger().Info("Configuring scheduled backup job", "volume", vol.Name, "schedule", vol.Freq)
 					}
 
-					jID, err := c.AddFunc(vol.Freq, func() { addBackupToQueue(vol) })
+					jID, err := c.AddFunc(vol.Freq, func() { addBackupToQueue(consul, vol) })
 
 					if err != nil {
 						backupLogger().Warn("Error creating scheduled backup", "volume", vol.Name, "error", err.Error())
@@ -152,14 +144,8 @@ func scheduleBackup(consul *consulAPI.Client, c *cron.Cron) {
 	}
 }
 
-func addBackupToQueue(vol types.Volume) {
+func addBackupToQueue(consul types.ConsulKV, vol types.Volume) {
 	backupLogger().Info("Queueing automated backup for volume", "volume", vol.Name)
-	consul, err := cnslclient.Client()
-	if err != nil {
-		backupLogger().Warn("Fatal error loading consul", "error", err.Error())
-		sentry.CaptureException(err)
-		return
-	}
 	newUUID := uuid.New()
 	j := types.Job{
 		ID:          "jobs/" + newUUID.String(),
@@ -169,7 +155,7 @@ func addBackupToQueue(vol types.Volume) {
 		AuditID:     0,
 		Node:        vol.Node,
 	}
-	err = j.Save(consul)
+	err := j.Save(consul)
 	if err != nil {
 		backupLogger().Warn("Fatal error queue automated backup job", "error", err.Error(), "jid", "jobs/"+newUUID.String())
 		sentry.CaptureException(err)

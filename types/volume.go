@@ -57,12 +57,11 @@ func (vol Volume) JSONEncode() []byte {
 }
 
 // Find the active job for this volume
-func (vol Volume) ScheduledJob(consul *consulAPI.Client) (*VolumeJob, error) {
+func (vol Volume) ScheduledJob(consul ConsulKV) (*VolumeJob, error) {
 	var vj VolumeJob
 	hostname, _ := os.Hostname()
-	kv := consul.KV()
 	volumePath := "borg/nodes/" + hostname + "/schedules/" + vol.Name
-	data, _, err := kv.Get(volumePath, nil)
+	data, _, err := consul.Get(volumePath, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -78,20 +77,18 @@ func (vol Volume) ScheduledJob(consul *consulAPI.Client) (*VolumeJob, error) {
 	return &vj, nil
 }
 
-func (vol Volume) ClearScheduledJob(consul *consulAPI.Client) {
+func (vol Volume) ClearScheduledJob(consul ConsulKV) {
 	hostname, _ := os.Hostname()
 	volumePath := "borg/nodes/" + hostname + "/schedules/" + vol.Name
-	kv := consul.KV()
-	_, _ = kv.Delete(volumePath, nil)
+	_, _ = consul.Delete(volumePath, nil)
 }
 
-func (vol Volume) AddScheduledJob(consul *consulAPI.Client, jid cron.EntryID) error {
+func (vol Volume) AddScheduledJob(consul ConsulKV, jid cron.EntryID) error {
 	volJob := VolumeJob{
 		JID:      jid,
 		Schedule: vol.Freq,
 	}
 	hostname, _ := os.Hostname()
-	kv := consul.KV()
 	volumePath := "borg/nodes/" + hostname + "/schedules/" + vol.Name
 	//jIdString := strconv.FormatInt(int64(volJob.JID), 10)
 
@@ -105,7 +102,7 @@ func (vol Volume) AddScheduledJob(consul *consulAPI.Client, jid cron.EntryID) er
 		Key:   volumePath,
 		Value: data,
 	}
-	if _, consulErr := kv.Put(&kp, nil); consulErr != nil {
+	if _, consulErr := consul.Put(&kp, nil); consulErr != nil {
 		return consulErr
 	}
 	return nil

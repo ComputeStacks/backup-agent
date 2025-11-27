@@ -2,14 +2,15 @@ package backup
 
 import (
 	"cs-agent/log"
-	consulAPI "github.com/hashicorp/consul/api"
+	"cs-agent/types"
+
 	"github.com/hashicorp/go-hclog"
 )
 
 // Delete a path in Consul (not a tree).
-func consulDeletePath(consul *consulAPI.Client, path string) {
-	kv := consul.KV()
-	_, _ = kv.Delete(path, nil)
+// Delete a path in Consul (not a tree).
+func consulDeletePath(consul types.ConsulKV, path string) {
+	_, _ = consul.Delete(path, nil)
 }
 
 func backupLogger() hclog.Logger {

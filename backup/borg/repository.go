@@ -15,15 +15,15 @@ package borg
 
 import (
 	"cs-agent/types"
-	"github.com/spf13/viper"
 	"reflect"
 	"strconv"
+
+	"github.com/spf13/viper"
 
 	"github.com/getsentry/sentry-go"
 )
 
 func FindRepository(vol *types.Volume, source *types.Volume) (*Repository, *LogMessage) {
-
 	r := Repository{Name: vol.Name, Retention: vol.Retention, SourceVolumeName: source.Name}
 
 	containerBuilt, containerErr := r.InitBackupContainer(vol, source)
@@ -37,7 +37,6 @@ func FindRepository(vol *types.Volume, source *types.Volume) (*Repository, *LogM
 
 	// Find Repo
 	repoResponse, err := r.Info()
-
 	if err != nil {
 		r.StopContainer()
 		return nil, err
@@ -61,7 +60,6 @@ func (r *Repository) FindArchive(name string) (a *Archive, err *LogMessage) {
 }
 
 func (r *Repository) Setup(vol *types.Volume, source *types.Volume) *LogMessage {
-
 	if reflect.ValueOf(r.Container).IsNil() {
 		containerBuilt, containerErr := r.InitBackupContainer(vol, source)
 		if containerErr != nil {
@@ -183,6 +181,32 @@ func (r *Repository) Prune() *LogMessage {
 
 	r.SyncConsul()
 	borgLogger().Info("Completed prune event", "volume_name", r.Name)
+	return nil
+}
+
+func (r *Repository) Compact() *LogMessage {
+	vol := types.Volume{Name: r.Name, Trash: true}
+	sourceVol := types.Volume{Name: r.SourceVolumeName, Trash: true}
+	if reflect.ValueOf(r.Container).IsNil() {
+		containerBuilt, containerErr := r.InitBackupContainer(&vol, &sourceVol)
+		if containerErr != nil {
+			sentry.CaptureException(containerErr)
+			return &LogMessage{Message: containerErr.Error()}
+		}
+		if !containerBuilt {
+			return &LogMessage{Message: "Failed to build backup container"}
+		}
+	}
+
+	cmd := []string{"borg --log-json"}
+	cmd = append(cmd, "--lock-wait "+viper.GetString("backups.borg.lock_wait"))
+	cmd = append(cmd, "compact --error --verbose")
+
+	if _, _, log := r.ExecWithLog(cmd); log != (LogMessage{}) {
+		return &log
+	}
+
+	borgLogger().Info("Completed compact event", "volume_name", r.Name)
 	return nil
 }
 

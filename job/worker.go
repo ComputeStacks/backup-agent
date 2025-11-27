@@ -9,15 +9,17 @@ import (
 	consulAPI "github.com/hashicorp/consul/api"
 )
 
+type JobProcessor func(consul *consulAPI.Client, job *types.Job)
+
 func setupWorkers(ctx context.Context, wg *sync.WaitGroup, consul *consulAPI.Client, queueName string, workerCount int, jobQueue chan types.Job) {
 	for i := 1; i <= workerCount; i++ {
 		jobEvent().Info("Starting worker process", "queue", queueName, "worker-process", i)
-		go worker(ctx, wg, queueName, consul, jobQueue)
+		go worker(ctx, wg, queueName, consul, jobQueue, processJob)
 	}
-	return
+
 }
 
-func worker(ctx context.Context, wg *sync.WaitGroup, queueName string, consul *consulAPI.Client, queue <-chan types.Job) {
+func worker(ctx context.Context, wg *sync.WaitGroup, queueName string, consul *consulAPI.Client, queue <-chan types.Job, processor JobProcessor) {
 	defer sentry.Recover()
 	defer wg.Done()
 	defer func() {
@@ -30,7 +32,7 @@ func worker(ctx context.Context, wg *sync.WaitGroup, queueName string, consul *c
 			return
 		case job := <-queue:
 			//jobEvent().Info("["+queueName+"] Have job", "job", job.ID)
-			processJob(consul, &job)
+			processor(consul, &job)
 			if ctx.Err() != nil {
 				jobEvent().Info("[" + queueName + "] Shutdown")
 				return
