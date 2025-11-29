@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.0
+
+* [CHANGE] Support for docker api v1.44
+* [CHANGE] Refactor and update dependencies.
+
 ## 1.6.0
 
 * [CHANGE] Bump dependencies to new major versions.
