@@ -9,6 +9,10 @@ import (
 
 func Perform(consul *consulAPI.Client) {
 	defer sentry.Recover()
+	// Enforce cross-project network isolation. This lives in DOCKER-USER and is
+	// independent of the per-port reconcile below (which only manages the
+	// expose-ports / container-inbound chains), so the two never interfere.
+	ensureProjectIsolation()
 	// Gather rules from ComputeStacks
 	expectedRules, err := loadExpectedRules(consul)
 	if err != nil {
