@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.8.0
+
+- [CHANGE] Move docker network isolation under the responsibility of the backup agent.
+
 ## 1.7.0
 
 * [CHANGE] Support for docker api v1.44
