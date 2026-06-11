@@ -18,6 +18,12 @@ func Perform(consul *consulAPI.Client) {
 	if err != nil {
 		return
 	}
+	// loadExpectedRules returns a nil *NatRules when this node has no ingress
+	// rules in consul (or the payload failed to parse). There is nothing to
+	// reconcile in that case, so skip rather than dereference nil below.
+	if expectedRules == nil {
+		return
+	}
 	// Gather current rules
 	currentRules := hostIPTableRules()
 	currentForwardRules := hostForwardIPTableRules()

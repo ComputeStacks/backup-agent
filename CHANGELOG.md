@@ -3,6 +3,9 @@
 ## v1.8.0
 
 - [CHANGE] Move docker network isolation under the responsibility of the backup agent.
+- [FIX] Resolve crash during firewall reconciliation on nodes with no ingress rules defined.
+- [FIX] Resolve crash when backing up a MySQL/MariaDB container that is offline or whose project event could not be created.
+- [FIX] Resolve crash while stopping a backup container that failed to initialize.
 
 ## 1.7.0
 

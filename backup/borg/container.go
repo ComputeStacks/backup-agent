@@ -192,7 +192,9 @@ func (r *Repository) ExecWithLog(cmd []string) (exitCode int, response string, l
 
 // StopContainer will stop the backup container.
 func (r *Repository) StopContainer() bool {
-	if r.Container == nil {
+	// A nil repository (e.g. FindRepository returned nil on a build/init
+	// failure and the deferred cleanup still fires) has nothing to stop.
+	if r == nil || r.Container == nil {
 		return true
 	}
 	return r.Container.Stop()

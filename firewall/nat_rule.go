@@ -42,6 +42,9 @@ func loadExpectedRules(consul *consulAPI.Client) (rules *NatRules, err error) {
 	if jsonErr != nil {
 		sentry.CaptureException(jsonErr)
 		csFirewallLog().Error("Error parsing response as json", "data", string(data.Value))
+		// Surface the parse failure instead of returning a possibly-nil/partial
+		// ruleset; the caller treats a non-nil err as "skip this reconcile".
+		return nil, jsonErr
 	}
 	return rules, err
 }
