@@ -11,3 +11,4 @@ testdata
 .revive.toml
 .envrc
 .richstyle
+.claude/worktrees
