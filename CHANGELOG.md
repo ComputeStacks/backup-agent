@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.9.0
+
+- [CHANGE] Move borg repository compaction from the backup server's host cron into the agent. It is scheduled per node (`backups.compact_freq`, with `backups.compact_jitter_sec` to spread load across nodes) and serialized against exports/prune via a per-volume lock. NFS-backed repositories are compacted locally on the server over SSH (`backups.borg.nfs_borg_path`). **Operators: remove the `cs-borg_compact` host cron once the fleet is upgraded; stagger the two during the overlap.**
+- [FIX] Only advance a volume's `last_backup` timestamp when the backup actually succeeds. Previously it advanced even on failure, masking missed backups.
+- [CHANGE] `borg create` now waits out an in-progress compact/prune (`backups.borg.lock_wait_create`, default 600s) rather than failing after 1 second and missing the backup.
+- [CHANGE] Surface remote stderr from SSH commands (e.g. failed NFS compaction/chown) in agent logs.
+
 ## v1.8.0
 
 - [CHANGE] Move docker network isolation under the responsibility of the backup agent.

@@ -42,6 +42,12 @@ backups:
   check_freq: "*/2 * * * *" # Every 2-minutes
   prune_freq: "15 1 * * *" # Every day at 01:15
 
+  # Borg compaction (reclaim freed space) now runs in-agent instead of as a host
+  # cron on the backup server. Set to "" to disable scheduling it. Offset after
+  # prune so prune (mark) runs before compact (reclaim).
+  compact_freq: "45 2 * * *" # Every day at 02:45
+  compact_jitter_sec: 1800 # Random 0-N sec delay before a compact sweep, to spread load across nodes
+
   key: changeme! # This is the encryption key
   mariadb:
     long_queries: # Kill long queries to unblock backup
@@ -54,6 +60,7 @@ backups:
     compress: "zstd,3"
     image: "ghcr.io/computestacks/cs-docker-borg:1.4"
     lock_wait: 1 # wait at most SECONDS for acquiring a repository/cache lock
+    lock_wait_create: 600 # `borg create` waits this long, so a scheduled backup rides out an in-agent compact instead of failing
 
     ##
     # SSH
@@ -75,6 +82,7 @@ backups:
     nfs: false # Set `true` to use nfs server to store backup volumes.
     nfs_host: 127.0.0.1
     nfs_host_path: "/var/nfsshare/backups"
+    nfs_borg_path: "borg" # Path to the borg binary ON the NFS server (agent runs `borg compact` there over SSH). Use an absolute path if borg isn't on the non-interactive SSH PATH.
     nfs_opts: ",async,noatime,rsize=32768,wsize=32768" # Ensure you include the `,`! `rw,nfsvers=4` is already included
     nfs_create_path: true # Create paths on backup server prior to mounting volume.
 
@@ -84,8 +92,12 @@ backups:
       user: "root" # SSH key used to connect to NFS server
       port: "22"
       keyfile: "/root/.ssh/id_ed25519" # SSH key used to connect to NFS server
-      fs_user: "nfsnobody"
-      fs_group: "nfsnobody"
+      # Must match your NFS server's squash mapping (Debian: nobody/nogroup;
+      # RHEL: nfsnobody/nfsnobody). The SAME values are used for both volume
+      # creation and compaction — a mismatch leaves borg files unreadable on the
+      # next backup.
+      fs_user: "nobody"
+      fs_group: "nogroup"
 docker:
   version: "1.41"
 queue:

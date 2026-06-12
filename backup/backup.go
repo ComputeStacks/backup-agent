@@ -106,6 +106,8 @@ func Perform(consul *consulAPI.Client, job *types.Job) error {
 
 	preBackupSuccess := preBackup(&vol, projectEvent)
 
+	backupSucceeded := false
+
 	if preBackupSuccess {
 		archiveMsg, archiveErr := archive.Create()
 		if archiveErr != nil {
@@ -124,7 +126,7 @@ func Perform(consul *consulAPI.Client, job *types.Job) error {
 				projectEvent.PostEventUpdate("agent-566dd010f637861e", archiveMsg.ToYaml())
 			}
 			postBackup(&vol, projectEvent, repo)
-
+			backupSucceeded = true
 		}
 	} else {
 		if projectEvent != nil {
@@ -138,7 +140,14 @@ func Perform(consul *consulAPI.Client, job *types.Job) error {
 		}
 	}
 
-	// Set last backup time to now.
+	// Only advance LastBackup on a successful archive creation. Advancing it on
+	// failure masks missed backups in ComputeStacks, which reads LastBackup to
+	// decide whether a volume is overdue. LastBackup is the only persistent
+	// field mutated here, so on failure there is nothing to write back.
+	if !backupSucceeded {
+		return nil
+	}
+
 	vol.LastBackup = int64(time.Now().Unix())
 	data.Value = vol.JSONEncode()
 	_, kvError := kv.Put(data, nil)

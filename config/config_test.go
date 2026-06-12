@@ -21,6 +21,10 @@ func TestConfigureAppDefaults(t *testing.T) {
 		{"queue.numworkers", 3},
 		{"backups.enabled", true},
 		{"backups.borg.image", "ghcr.io/computestacks/cs-docker-borg:latest"},
+		{"backups.compact_freq", "45 2 * * *"},
+		{"backups.compact_jitter_sec", 1800},
+		{"backups.borg.lock_wait_create", "600"},
+		{"backups.borg.nfs_borg_path", "borg"},
 	}
 
 	for _, tt := range tests {

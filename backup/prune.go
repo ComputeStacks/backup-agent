@@ -29,17 +29,21 @@ func prune(consul types.ConsulKV) {
 			continue
 		}
 		if vol.Backup && vol.Node == hostname {
-			repo, repoErr := borg.FindRepository(&vol, &vol)
-
-			if repoErr != nil {
-				backupLogger().Warn("Prune Volume Error, error loading repo", "volume", vol.Name, "error", repoErr.Message)
-			} else {
-				err := repo.Prune()
-				if err != nil {
+			// Serialize against compact/export of the same repo. Scoped to a
+			// closure so the lock releases each iteration (and on panic), not at
+			// function return.
+			func() {
+				defer borg.AcquireRepoLock(vol.Name)()
+				repo, repoErr := borg.FindRepository(&vol, &vol)
+				if repoErr != nil {
+					backupLogger().Warn("Prune Volume Error, error loading repo", "volume", vol.Name, "error", repoErr.Message)
+					return
+				}
+				if err := repo.Prune(); err != nil {
 					backupLogger().Warn("Prune Volume Error", "volume", vol.Name)
 				}
 				repo.Container.Stop()
-			}
+			}()
 		}
 	}
 

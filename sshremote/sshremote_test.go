@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"net"
 	"os"
+	"strings"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
@@ -101,9 +102,13 @@ func handleConnection(t *testing.T, nConn net.Conn, config *ssh.ServerConfig) {
 				case "exec":
 					cmd := string(req.Payload[4:])
 					var status struct{ Status uint32 }
-					if cmd == "exit 1" {
+					switch cmd {
+					case "exit 1":
 						status.Status = 1
-					} else {
+					case "writeerr":
+						channel.Stderr().Write([]byte("boom"))
+						status.Status = 2
+					default:
 						channel.Write([]byte("output"))
 						status.Status = 0
 					}
@@ -162,5 +167,21 @@ func TestSSHCommandString(t *testing.T) {
 	}
 	if output != "output" {
 		t.Errorf("SSHCommandString expected 'output', got '%s'", output)
+	}
+}
+
+func TestSSHCommandStringStderr(t *testing.T) {
+	addr, keyFile, cleanup := startSSHServer(t)
+	defer cleanup()
+
+	host, port, _ := net.SplitHostPort(addr)
+	sci := ServerConnInfo{Server: host, Port: port, User: "testuser", Key: keyFile}
+
+	_, err := SSHCommandString("writeerr", sci)
+	if err == nil {
+		t.Fatal("expected an error for a non-zero remote command")
+	}
+	if !strings.Contains(err.Error(), "boom") {
+		t.Errorf("expected remote stderr 'boom' to be surfaced in the error, got: %v", err)
 	}
 }

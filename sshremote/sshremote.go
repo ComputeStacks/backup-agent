@@ -125,8 +125,9 @@ func SSHCommandString(command string, sci ServerConnInfo) (string, error) {
 		return "", err
 	}
 
-	var stdoutBuf bytes.Buffer
+	var stdoutBuf, stderrBuf bytes.Buffer
 	session.Stdout = &stdoutBuf
+	session.Stderr = &stderrBuf
 
 	err = session.Run(command)
 
@@ -134,6 +135,11 @@ func SSHCommandString(command string, sci ServerConnInfo) (string, error) {
 	_ = conn.Close()
 
 	if err != nil {
+		// Surface remote stderr (and the non-zero exit) so failures in commands
+		// like `borg compact` / `chown` are diagnosable rather than opaque.
+		if stderr := strings.TrimSpace(stderrBuf.String()); stderr != "" {
+			return "", fmt.Errorf("%w: %s", err, stderr)
+		}
 		return "", err
 	}
 	return strings.TrimSuffix(stdoutBuf.String(), "\n"), nil

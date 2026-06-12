@@ -13,6 +13,17 @@ import (
 	"github.com/spf13/viper"
 )
 
+// lockWait returns the borg --lock-wait value for an operation, falling back to
+// the global backups.borg.lock_wait when no per-op override is configured. A
+// scheduled `create` uses a longer wait so it rides out an in-agent compact/prune
+// (both hold borg's exclusive lock) instead of failing fast and missing a backup.
+func lockWait(op string) string {
+	if v := viper.GetString("backups.borg.lock_wait_" + op); v != "" {
+		return v
+	}
+	return viper.GetString("backups.borg.lock_wait")
+}
+
 func (a *Archive) Create() (ArchiveMessage, *LogMessage) {
 	var borgResponse ArchiveMessage
 	var log LogMessage
@@ -31,7 +42,7 @@ func (a *Archive) Create() (ArchiveMessage, *LogMessage) {
 	}
 
 	backupCmd := []string{"cd /mnt/data && borg --log-json"}
-	backupCmd = append(backupCmd, "--lock-wait "+viper.GetString("backups.borg.lock_wait"))
+	backupCmd = append(backupCmd, "--lock-wait "+lockWait("create"))
 	backupCmd = append(backupCmd, "create --error --one-file-system --json --numeric-ids --exclude-caches")
 	backupCmd = append(backupCmd, "--compression "+viper.GetString("backups.borg.compression"))
 	backupCmd = append(backupCmd, a.archivePath())

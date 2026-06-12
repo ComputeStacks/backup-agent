@@ -45,11 +45,22 @@ func ConfigureApp() {
 	viper.SetDefault("backups.enabled", true)
 	viper.SetDefault("backups.check_freq", "* * * * *")
 	viper.SetDefault("backups.prune_freq", "15 1 * * *")
+	// Compaction now runs in-agent (was a host cron on the backup server). Set
+	// to "" to disable scheduling it. Offset from prune so prune (mark) runs
+	// before compact (reclaim).
+	viper.SetDefault("backups.compact_freq", "45 2 * * *")
+	// Per-node random delay (seconds) before a compact sweep, so many nodes
+	// sharing one backup server don't all compact at the same minute.
+	viper.SetDefault("backups.compact_jitter_sec", 1800)
 	viper.SetDefault("backups.key", "changeme!")
 
 	viper.SetDefault("backups.borg.image", "ghcr.io/computestacks/cs-docker-borg:latest")
 	viper.SetDefault("backups.borg.compression", "zstd,3")
 	viper.SetDefault("backups.borg.lock_wait", "1")
+	// Longer lock-wait for `borg create`: a scheduled backup should wait out an
+	// in-agent compact/prune (both hold borg's exclusive lock) rather than fail
+	// after 1s and miss the backup. Ops without an override fall back to lock_wait.
+	viper.SetDefault("backups.borg.lock_wait_create", "600")
 
 	viper.SetDefault("backups.borg.ssh.enabled", false)
 	viper.SetDefault("backups.borg.ssh.user", "")
@@ -64,6 +75,11 @@ func ConfigureApp() {
 	viper.SetDefault("backups.borg.nfs_opts", ",async,noatime,rsize=32768,wsize=32768")
 
 	viper.SetDefault("backups.borg.nfs_host_path", "/var/nfsshare/volume_backups")
+	// Path to the borg binary ON the NFS/backup server. The agent runs
+	// `borg compact` locally there over SSH (heavy segment rewriting stays off
+	// the network). A non-interactive SSH session may lack /usr/local/bin on
+	// PATH, so this is configurable; bare "borg" relies on the remote PATH.
+	viper.SetDefault("backups.borg.nfs_borg_path", "borg")
 	viper.SetDefault("backups.borg.nfs_ssh.user", "root")
 	viper.SetDefault("backups.borg.nfs_ssh.port", "22")
 	viper.SetDefault("backups.borg.nfs_ssh.keyfile", "/root/.ssh/id_ed25519")

@@ -14,6 +14,7 @@ Uses local borg installation:
 package borg
 
 import (
+	"cs-agent/sshremote"
 	"cs-agent/types"
 	"reflect"
 	"strconv"
@@ -184,7 +185,22 @@ func (r *Repository) Prune() *LogMessage {
 	return nil
 }
 
+// Compact reclaims space freed by prune/delete. Callers MUST hold the per-repo
+// lock (AcquireRepoLock) so a compact never overlaps an export of the same repo
+// (export reads with --bypass-lock and would fail on a segment compact rewrites).
+//
+// For the NFS backend compaction runs LOCALLY on the backup server over SSH:
+// rewriting segments through the NFS mount would push all that I/O over the
+// network. local/SSH backends compact through the borg container (for the SSH
+// backend borg-serve keeps the heavy work server-side).
 func (r *Repository) Compact() *LogMessage {
+	if viper.GetBool("backups.borg.nfs") {
+		return r.compactNFS()
+	}
+	return r.compactContainer()
+}
+
+func (r *Repository) compactContainer() *LogMessage {
 	vol := types.Volume{Name: r.Name, Trash: true}
 	sourceVol := types.Volume{Name: r.SourceVolumeName, Trash: true}
 	if reflect.ValueOf(r.Container).IsNil() {
@@ -206,8 +222,55 @@ func (r *Repository) Compact() *LogMessage {
 		return &log
 	}
 
+	// Refresh Consul on-disk usage stats now that space has been reclaimed.
+	r.SyncConsul()
 	borgLogger().Info("Completed compact event", "volume_name", r.Name)
 	return nil
+}
+
+// compactNFS runs `borg compact` on the NFS/backup server over SSH, then fixes
+// ownership of any segments borg rewrote (borg runs as the SSH user there, while
+// the container writes as the NFS-squash fs_user/fs_group — a mismatch would make
+// the files unreadable on the next backup). Mirrors the host cron it replaces.
+// Consul usage stats refresh on the next backup/prune (both call SyncConsul); we
+// don't build a container here just to re-read them.
+func (r *Repository) compactNFS() *LogMessage {
+	cmd, ok := nfsCompactCommand(r.Name)
+	if !ok {
+		return &LogMessage{Message: "refusing to compact: unsafe repository name " + r.Name}
+	}
+
+	connInfo := sshremote.ServerConnInfo{
+		Server: viper.GetString("backups.borg.nfs_host"),
+		Port:   viper.GetString("backups.borg.nfs_ssh.port"),
+		User:   viper.GetString("backups.borg.nfs_ssh.user"),
+		Key:    viper.GetString("backups.borg.nfs_ssh.keyfile"),
+	}
+
+	if _, err := sshremote.SSHCommandString(cmd, connInfo); err != nil {
+		// SSHCommandString folds remote stderr into err; stdout is empty on error.
+		borgLogger().Error("NFS compact failed", "volume", r.Name, "error", err.Error())
+		sentry.CaptureException(err)
+		return &LogMessage{Message: err.Error()}
+	}
+
+	borgLogger().Info("Completed compact event", "volume_name", r.Name, "backend", "nfs")
+	return nil
+}
+
+// nfsCompactCommand builds the remote shell command to compact a repo locally on
+// the NFS server, then chown the result to the NFS-squash user (mirrors the host
+// cron it replaces). r.Name is interpolated into the command, so an unsafe name
+// returns ok=false rather than building it.
+func nfsCompactCommand(name string) (string, bool) {
+	if !safeRepoName(name) {
+		return "", false
+	}
+	basePath := viper.GetString("backups.borg.nfs_host_path") + "/b-" + name
+	cmd := viper.GetString("backups.borg.nfs_borg_path") + " compact --verbose --log-json " + basePath + "/backup" +
+		" && chown -R " + viper.GetString("backups.borg.nfs_ssh.fs_user") + ":" +
+		viper.GetString("backups.borg.nfs_ssh.fs_group") + " " + basePath
+	return cmd, true
 }
 
 func (r *Repository) SyncConsul() {

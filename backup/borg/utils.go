@@ -2,12 +2,24 @@ package borg
 
 import (
 	"cs-agent/log"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/hashicorp/go-hclog"
 )
+
+// Docker volume / borg repository names: must start alphanumeric, then the
+// Docker volume name charset. Used to guard names interpolated into remote
+// shell commands (e.g. NFS-server compact over SSH).
+var repoNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+
+// safeRepoName reports whether name is a plain repository identifier safe to
+// interpolate into a remote shell command.
+func safeRepoName(name string) bool {
+	return repoNameRe.MatchString(name)
+}
 
 type BTimeFormat time.Time
 

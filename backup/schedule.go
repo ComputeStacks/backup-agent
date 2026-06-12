@@ -37,6 +37,19 @@ func InitSchedule(consul types.ConsulKV, c *cron.Cron) {
 		return
 	}
 
+	// Compaction moved in-agent (was a host cron on the backup server). Empty
+	// disables scheduling; an invalid cron string is a loud failure.
+	if compactFreq := viper.GetString("backups.compact_freq"); compactFreq != "" {
+		_, err = c.AddFunc(compactFreq, func() { compact(consul) })
+		if err != nil {
+			backupLogger().Warn("Fatal error scheduling backups.compact_freq", "error", err.Error())
+			sentry.CaptureException(err)
+			return
+		}
+	} else {
+		backupLogger().Info("Compaction scheduling disabled (backups.compact_freq is empty)")
+	}
+
 }
 
 func scheduleBackup(consul types.ConsulKV, c *cron.Cron) {

@@ -8,10 +8,12 @@ import (
 	consulAPI "github.com/hashicorp/consul/api"
 
 	"github.com/robfig/cron/v3"
+	"github.com/spf13/viper"
 )
 
 func TestInitSchedule(t *testing.T) {
 
+	viper.Reset()
 	config.ConfigureApp()
 	c := cron.New()
 	mockConsul := &MockConsulKV{
@@ -26,8 +28,8 @@ func TestInitSchedule(t *testing.T) {
 
 	//defer fakeVolume.ClearScheduledJob(consul)
 
-	if len(c.Entries()) != 2 {
-		t.Errorf("Expected 2 jobs to be created, but got %d", len(c.Entries()))
+	if len(c.Entries()) != 3 {
+		t.Errorf("Expected 3 jobs to be created (check, prune, compact), but got %d", len(c.Entries()))
 	} else {
 		t.Logf("Successfully found %d jobs", len(c.Entries()))
 	}
@@ -39,8 +41,8 @@ func TestInitSchedule(t *testing.T) {
 		return
 	}
 
-	if len(c.Entries()) != 3 {
-		t.Errorf("I expected 3 jobs, but instead i got %d", len(c.Entries()))
+	if len(c.Entries()) != 4 {
+		t.Errorf("I expected 4 jobs, but instead i got %d", len(c.Entries()))
 		return
 	}
 
@@ -77,8 +79,8 @@ func TestInitSchedule(t *testing.T) {
 
 	c.Remove(jid)
 
-	if len(c.Entries()) != 2 {
-		t.Errorf("I expected 2 jobs, but instead i got %d", len(c.Entries()))
+	if len(c.Entries()) != 3 {
+		t.Errorf("I expected 3 jobs, but instead i got %d", len(c.Entries()))
 		return
 	}
 
@@ -86,6 +88,23 @@ func TestInitSchedule(t *testing.T) {
 
 	// TODO: Create fake volume and try to push it to the job queue to test how the cron system would do it.
 
+}
+
+// An empty backups.compact_freq must disable compaction scheduling (only the
+// check and prune entries remain). Guards against an empty-default regression
+// that a count-only assertion in TestInitSchedule wouldn't otherwise catch.
+func TestInitScheduleCompactDisabled(t *testing.T) {
+	viper.Reset()
+	config.ConfigureApp()
+	viper.Set("backups.compact_freq", "")
+
+	c := cron.New()
+	mockConsul := &MockConsulKV{store: make(map[string][]byte)}
+	InitSchedule(mockConsul, c)
+
+	if len(c.Entries()) != 2 {
+		t.Errorf("with compact_freq empty, expected 2 cron entries (check, prune), got %d", len(c.Entries()))
+	}
 }
 
 type MockConsulKV struct {
