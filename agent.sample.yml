@@ -58,7 +58,7 @@ backups:
       timeout: 60 # In seconds, how long to wait while attempting to grab global lock.
   borg:
     compress: "zstd,3"
-    image: "ghcr.io/computestacks/cs-docker-borg:1.4"
+    image: "ghcr.io/computestacks/cs-docker-borg:1.5"
     lock_wait: 1 # wait at most SECONDS for acquiring a repository/cache lock
     lock_wait_create: 600 # `borg create` waits this long, so a scheduled backup rides out an in-agent compact instead of failing
 
