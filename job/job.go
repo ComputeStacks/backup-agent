@@ -55,9 +55,11 @@ func Watch(wg *sync.WaitGroup) {
 	setupWorkers(ctx, wg, consul, "export", exportWorkerCount, exportQueue)
 	captureExit(cancel)
 
-	// On boot, mark any export left "running" by a crashed process as failed.
+	// On boot, before dispatching, reconcile exports left "running" by a crashed
+	// process (mark failed + drop the orphaned job so it isn't auto-re-run).
+	// Synchronous so it can't race a re-dispatch of the same job.
 	if viper.GetString("backups.export.s3.bucket") != "" {
-		go backup.ReconcileOrphanedExports(consul)
+		backup.ReconcileOrphanedExports(consul)
 	}
 
 	kvClient := consul.KV()
@@ -109,7 +111,10 @@ func Watch(wg *sync.WaitGroup) {
 						select {
 						case exportQueue <- job:
 						default:
-							clearExportInFlight(job.ID) // export worker busy; retry next watch tick
+							// export worker busy: leave the KV key in place; it's
+							// re-dispatched on the next jobs/ change (e.g. when the
+							// busy export finishes and deletes its key)
+							clearExportInFlight(job.ID)
 						}
 					}
 				default:

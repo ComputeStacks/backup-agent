@@ -107,6 +107,7 @@ backups:
   export:
     workers: 1 # dedicated export workers; each big export uses ~part_size*concurrency RAM
     tar_filter: "" # optional borg --tar-filter, e.g. "gzip" (repo is already compressed)
+    timeout_sec: 14400 # hard cap on a single export (seconds); a hung borg/S3 fails instead of holding the repo lock
     s3:
       endpoint: "" # empty = AWS; set an https URL for S3-compatible (MinIO/Ceph)
       region: "us-east-1"

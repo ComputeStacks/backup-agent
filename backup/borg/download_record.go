@@ -44,6 +44,16 @@ func DownloadVolumeFromKey(key string) string {
 	return parts[2]
 }
 
+// DownloadJidFromKey extracts the jid from a borg/exports/<volume>/<jid> key,
+// or "" if the key isn't in that shape.
+func DownloadJidFromKey(key string) string {
+	parts := strings.Split(key, "/")
+	if len(parts) != 4 || parts[0] != "borg" || parts[1] != "exports" {
+		return ""
+	}
+	return parts[3]
+}
+
 // Save writes the record to the given full KV key.
 func (d *ConsulDownload) Save(key string) error {
 	consul, err := cnslclient.Client()

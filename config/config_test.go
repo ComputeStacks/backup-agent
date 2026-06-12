@@ -26,6 +26,7 @@ func TestConfigureAppDefaults(t *testing.T) {
 		{"backups.borg.lock_wait_create", "600"},
 		{"backups.borg.nfs_borg_path", "borg"},
 		{"backups.export.workers", 1},
+		{"backups.export.timeout_sec", 14400},
 		{"backups.export.s3.part_size_mb", 64},
 		{"backups.export.s3.sse", "AES256"},
 		{"backups.export.s3.default_ttl_sec", 21600},

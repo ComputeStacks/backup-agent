@@ -94,9 +94,10 @@ func ConfigureApp() {
 
 	// Backup export ("download backup"): stream a chosen archive to S3 and hand
 	// back a presigned URL. Inert until backups.export.s3.bucket is set.
-	viper.SetDefault("backups.export.workers", 1)      // dedicated export worker count
-	viper.SetDefault("backups.export.tar_filter", "")  // optional borg --tar-filter (e.g. "gzip"); repo is already compressed
-	viper.SetDefault("backups.export.s3.endpoint", "") // empty = real AWS; set for S3-compatible (MinIO/Ceph)
+	viper.SetDefault("backups.export.workers", 1)         // dedicated export worker count
+	viper.SetDefault("backups.export.tar_filter", "")     // optional borg --tar-filter (e.g. "gzip"); repo is already compressed
+	viper.SetDefault("backups.export.timeout_sec", 14400) // hard cap on a single export so a hung borg/S3 can't hold the repo lock (4h)
+	viper.SetDefault("backups.export.s3.endpoint", "")    // empty = real AWS; set for S3-compatible (MinIO/Ceph)
 	viper.SetDefault("backups.export.s3.region", "us-east-1")
 	viper.SetDefault("backups.export.s3.bucket", "")
 	viper.SetDefault("backups.export.s3.prefix", "exports/")

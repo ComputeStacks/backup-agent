@@ -14,6 +14,9 @@ func TestDownloadKeyRoundTrip(t *testing.T) {
 	if got := DownloadVolumeFromKey(key); got != "vol-1" {
 		t.Errorf("DownloadVolumeFromKey(%q) = %q, want vol-1", key, got)
 	}
+	if got := DownloadJidFromKey(key); got != "jid-abc" {
+		t.Errorf("DownloadJidFromKey(%q) = %q, want jid-abc", key, got)
+	}
 	for _, bad := range []string{
 		"",
 		"borg/exports/vol-1",     // too few segments
@@ -23,6 +26,9 @@ func TestDownloadKeyRoundTrip(t *testing.T) {
 	} {
 		if got := DownloadVolumeFromKey(bad); got != "" {
 			t.Errorf("DownloadVolumeFromKey(%q) = %q, want empty", bad, got)
+		}
+		if got := DownloadJidFromKey(bad); got != "" {
+			t.Errorf("DownloadJidFromKey(%q) = %q, want empty", bad, got)
 		}
 	}
 }

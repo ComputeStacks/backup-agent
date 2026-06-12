@@ -258,8 +258,7 @@ func (c *Container) Exec(jobCommands []string, event *csevent.ProjectEvent) (exi
 // The exit code is read only after the stream reaches EOF (the exec has
 // finished); a still-running exec is treated as a failure so the caller never
 // mistakes a truncated stream for success.
-func (c *Container) ExecStream(cmd []string, stdout io.Writer) (exitCode int, stderr string, err error) {
-	ctx := context.Background()
+func (c *Container) ExecStream(ctx context.Context, cmd []string, stdout io.Writer) (exitCode int, stderr string, err error) {
 	cli, err := client.NewClientWithOpts(client.WithVersion(viper.GetString("docker.version")))
 	if err != nil {
 		return 1, "", err
@@ -301,10 +300,29 @@ func (c *Container) ExecStream(cmd []string, stdout io.Writer) (exitCode int, st
 	}
 	defer resp.Close()
 
+	// If ctx is cancelled/times out, close the hijacked connection so a StdCopy
+	// blocked on a hung borg unblocks — cancelling ctx alone does not interrupt
+	// the in-flight Read on the attached stream.
+	watchdogDone := make(chan struct{})
+	defer close(watchdogDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			resp.Close()
+		case <-watchdogDone:
+		}
+	}()
+
 	// Demux the multiplexed stream: stdout (tar bytes) -> w, stderr -> buffer.
 	var stderrBuf bytes.Buffer
 	if _, copyErr := stdcopy.StdCopy(stdout, &stderrBuf, resp.Reader); copyErr != nil {
+		if ctx.Err() != nil {
+			return 1, stderrBuf.String(), ctx.Err()
+		}
 		return 1, stderrBuf.String(), copyErr
+	}
+	if ctx.Err() != nil {
+		return 1, stderrBuf.String(), ctx.Err()
 	}
 
 	// The stream is fully drained, so the exec has finished: read the exit code.

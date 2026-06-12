@@ -1,6 +1,7 @@
 package borg
 
 import (
+	"context"
 	"io"
 	"reflect"
 	"strconv"
@@ -21,7 +22,7 @@ import (
 // w receives raw tar bytes; borg's --log-json diagnostics arrive on stderr and
 // are parsed into a LogMessage. A non-nil return means the tar written to w is
 // incomplete/untrustworthy and must NOT be published.
-func (a *Archive) ExportTar(w io.Writer) *LogMessage {
+func (a *Archive) ExportTar(ctx context.Context, w io.Writer) *LogMessage {
 	if a.Repository == nil {
 		return &LogMessage{Message: "Missing Repository"}
 	}
@@ -37,7 +38,7 @@ func (a *Archive) ExportTar(w io.Writer) *LogMessage {
 	cmd = append(cmd, a.archivePath())
 	cmd = append(cmd, "-") // write the tar to stdout
 
-	exitCode, stderr, err := a.Repository.Container.ExecStream([]string{"sh", "-c", strings.Join(cmd, " ")}, w)
+	exitCode, stderr, err := a.Repository.Container.ExecStream(ctx, []string{"sh", "-c", strings.Join(cmd, " ")}, w)
 	if err != nil {
 		return &LogMessage{Message: err.Error()}
 	}

@@ -17,6 +17,7 @@ import (
 
 	"github.com/getsentry/sentry-go"
 	consulAPI "github.com/hashicorp/consul/api"
+	"github.com/spf13/viper"
 )
 
 // Event codes for the backup-export operation.
@@ -48,6 +49,7 @@ func ExportBackup(consul *consulAPI.Client, job *types.Job) {
 	hostname, _ := os.Hostname()
 	kv := consul.KV()
 	opts := &consulAPI.QueryOptions{RequireConsistent: true}
+	jid := strings.TrimPrefix(job.ID, "jobs/")
 
 	data, _, err := kv.Get("volumes/"+job.VolumeName, opts)
 	if err != nil {
@@ -57,6 +59,9 @@ func ExportBackup(consul *consulAPI.Client, job *types.Job) {
 	}
 	if data == nil {
 		backupLogger().Warn("Export: skipping unknown volume", "volume", job.VolumeName)
+		saveDownload(borg.DownloadKey(job.VolumeName, jid), &borg.ConsulDownload{
+			Status: borg.DownloadStatusFailed, Error: "unknown volume", UpdatedAt: nowUnix(),
+		})
 		return
 	}
 	vol, err := types.LoadVolume(data.Value)
@@ -67,10 +72,12 @@ func ExportBackup(consul *consulAPI.Client, job *types.Job) {
 	}
 	if vol.Node != hostname {
 		backupLogger().Info("Export: skipping volume not under my control", "volume", job.VolumeName)
+		saveDownload(borg.DownloadKey(vol.Name, jid), &borg.ConsulDownload{
+			Status: borg.DownloadStatusFailed, Error: "volume is not assigned to this node", UpdatedAt: nowUnix(),
+		})
 		return
 	}
 
-	jid := strings.TrimPrefix(job.ID, "jobs/")
 	dlKey := borg.DownloadKey(vol.Name, jid)
 
 	projectEvent := csevent.New(vol.ProjectID, []int{vol.ID}, exportEventCode, exportEventLocale, job.AuditID)
@@ -98,6 +105,15 @@ func ExportBackup(consul *consulAPI.Client, job *types.Job) {
 		return
 	}
 
+	// Bound the whole export so a hung borg or a stalled S3 endpoint can't hold
+	// the per-repo lock or the export worker forever.
+	ctx := context.Background()
+	if t := viper.GetInt("backups.export.timeout_sec"); t > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(t)*time.Second)
+		defer cancel()
+	}
+
 	// Serialize against compact/prune of the same repo for the whole stream.
 	defer borg.AcquireRepoLock(vol.Name)()
 
@@ -120,7 +136,7 @@ func ExportBackup(consul *consulAPI.Client, job *types.Job) {
 	pr, pw := io.Pipe()
 	exportErrCh := make(chan *borg.LogMessage, 1)
 	go func() {
-		lg := archive.ExportTar(pw)
+		lg := archive.ExportTar(ctx, pw)
 		if lg != nil {
 			// Make the uploader's Read fail so it can't Complete a truncated tar.
 			pw.CloseWithError(errors.New(lg.Message))
@@ -130,7 +146,11 @@ func ExportBackup(consul *consulAPI.Client, job *types.Job) {
 		exportErrCh <- lg
 	}()
 
-	size, upErr := uploader.Upload(context.Background(), objectKey, pr)
+	size, upErr := uploader.Upload(ctx, objectKey, pr)
+
+	// If the upload abandoned the read (error or timeout), unblock the producer's
+	// pw.Write so the export goroutine can't leak.
+	pr.CloseWithError(upErr)
 
 	// Stream is drained; safe to tear the container down now (not via an early defer).
 	repo.StopContainer()
@@ -147,7 +167,7 @@ func ExportBackup(consul *consulAPI.Client, job *types.Job) {
 		return
 	}
 
-	url, expiry, psErr := uploader.PresignGet(context.Background(), objectKey, time.Duration(job.DownloadTTL)*time.Second)
+	url, expiry, psErr := uploader.PresignGet(ctx, objectKey, time.Duration(job.DownloadTTL)*time.Second)
 	if psErr != nil {
 		failExport(projectEvent, dlKey, "presign failed: "+psErr.Error())
 		return
@@ -199,6 +219,13 @@ func ReconcileOrphanedExports(consul *consulAPI.Client) {
 		d.UpdatedAt = nowUnix()
 		if saveErr := d.Save(key); saveErr != nil {
 			backupLogger().Warn("Export reconcile: failed to update record", "key", key, "error", saveErr.Error())
+		}
+		// Drop the orphaned job so it isn't auto-re-run (no blind 50GB resume);
+		// the user re-requests if they still want the download.
+		if oj := borg.DownloadJidFromKey(key); oj != "" {
+			if _, delErr := consul.KV().Delete("jobs/"+oj, nil); delErr != nil {
+				backupLogger().Warn("Export reconcile: failed to delete orphaned job", "jid", oj, "error", delErr.Error())
+			}
 		}
 	}
 }
