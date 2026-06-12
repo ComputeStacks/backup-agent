@@ -12,6 +12,7 @@ import (
 type JobProcessor func(consul *consulAPI.Client, job *types.Job)
 
 func setupWorkers(ctx context.Context, wg *sync.WaitGroup, consul *consulAPI.Client, queueName string, workerCount int, jobQueue chan types.Job) {
+	wg.Add(workerCount) // register this pool's workers; main only Adds job.Watch itself
 	for i := 1; i <= workerCount; i++ {
 		jobEvent().Info("Starting worker process", "queue", queueName, "worker-process", i)
 		go worker(ctx, wg, queueName, consul, jobQueue, processJob)

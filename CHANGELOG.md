@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.10.0
+
+- [FEATURE] Backup export ("download backup"): a new `backup.export` job streams a chosen archive to S3 (or S3-compatible storage) via `borg export-tar --bypass-lock` and publishes a presigned download URL to Consul KV (`borg/exports/<volume>/<jid>`) for ComputeStacks to read. Streams with no scratch disk, runs on a dedicated worker so it never blocks scheduled backups, and serializes against compaction per-repo. Configure under `backups.export.*`; inert until `backups.export.s3.bucket` is set. NOTE: the exported tar is plaintext (unlike the encrypted repo) — keep the bucket private, enable SSE, and use a short URL TTL + object-expiry lifecycle rule.
+
 ## v1.9.0
 
 - [CHANGE] Move borg repository compaction from the backup server's host cron into the agent. It is scheduled per node (`backups.compact_freq`, with `backups.compact_jitter_sec` to spread load across nodes) and serialized against exports/prune via a per-volume lock. NFS-backed repositories are compacted locally on the server over SSH (`backups.borg.nfs_borg_path`). **Operators: remove the `cs-borg_compact` host cron once the fleet is upgraded; stagger the two during the overlap.**

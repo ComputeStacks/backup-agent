@@ -6,6 +6,7 @@ import (
 	"cs-agent/config"
 	"cs-agent/job"
 	"cs-agent/log"
+	"cs-agent/s3upload"
 	"os"
 	"sync"
 	"time"
@@ -17,12 +18,12 @@ import (
 
 func main() {
 	var wg sync.WaitGroup
-	v := "1.9.0"
+	v := "1.10.0"
 	config.ConfigureApp()
 	configureSentry(v)
+	validateExportConfig()
 	ensureConsulReady()
-	wgCount := 1 + viper.GetInt("queue.numworkers") // job.Watch() + Workers that will be created
-	wg.Add(wgCount)
+	wg.Add(1) // job.Watch(); setupWorkers() registers each worker pool's own count
 	if viper.GetBool("backups.enabled") {
 		c := cron.New()
 		consul, err := cnslclient.Client()
@@ -34,7 +35,7 @@ func main() {
 	go job.Watch(&wg)
 	log.New().Info("Starting CS-Agent", "version", v)
 	log.New().Info("Agent Configuration", "environment", config.ReleaseEnvironment())
-	log.New().Info("Agent Configuration", "backupWorkers", wgCount)
+	log.New().Info("Agent Configuration", "backupWorkers", viper.GetInt("queue.numworkers")+1)
 	log.New().Info("Agent Configuration", "firewallWorkers", 1)
 	log.New().Info("Agent Configuration", "backingFS", currentBackupMethod())
 
@@ -49,6 +50,25 @@ func currentBackupMethod() string {
 		return "nfs"
 	} else {
 		return "local"
+	}
+}
+
+// validateExportConfig loudly surfaces export misconfiguration at startup. It
+// does not abort the agent (export jobs fail individually if misconfigured), but
+// the no-compactor combination is dangerous enough to flag prominently: with
+// export enabled and the host compact cron retired, an empty compact_freq means
+// nothing ever compacts repos and they grow unbounded.
+func validateExportConfig() {
+	if viper.GetString("backups.export.s3.bucket") == "" {
+		return // export disabled (no bucket)
+	}
+	if viper.GetString("backups.compact_freq") == "" {
+		log.New().Error("backups.export is enabled but backups.compact_freq is empty: with the host compact cron retired, nothing compacts repositories and they will grow unbounded. Set backups.compact_freq.")
+		sentry.CaptureMessage("backup export enabled with compaction disabled (no compactor)")
+	}
+	if err := s3upload.ConfigFromViper().Validate(0); err != nil {
+		log.New().Error("Invalid backups.export.s3 configuration", "error", err.Error())
+		sentry.CaptureException(err)
 	}
 }
 

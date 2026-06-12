@@ -43,11 +43,22 @@ func Watch(wg *sync.WaitGroup) {
 	// Build Job Queues
 	ctx, cancel := context.WithCancel(context.Background())
 	backupWorkerCount := viper.GetInt("queue.numworkers") + 1
+	exportWorkerCount := viper.GetInt("backups.export.workers")
+	if exportWorkerCount < 1 {
+		exportWorkerCount = 1
+	}
 	backupQueue := make(chan types.Job)
 	ipTableQueue := make(chan types.Job)
+	exportQueue := make(chan types.Job)
 	setupWorkers(ctx, wg, consul, "backup", backupWorkerCount, backupQueue)
 	setupWorkers(ctx, wg, consul, "firewall", 1, ipTableQueue)
+	setupWorkers(ctx, wg, consul, "export", exportWorkerCount, exportQueue)
 	captureExit(cancel)
+
+	// On boot, mark any export left "running" by a crashed process as failed.
+	if viper.GetString("backups.export.s3.bucket") != "" {
+		go backup.ReconcileOrphanedExports(consul)
+	}
 
 	kvClient := consul.KV()
 	opts := &consulAPI.QueryOptions{AllowStale: false}
@@ -85,12 +96,26 @@ func Watch(wg *sync.WaitGroup) {
 			}
 			job.ID = data.Key
 			if hostname == job.Node {
-				if job.Name == "firewall" {
+				switch job.Name {
+				case "firewall":
 					ipTableQueue <- job
-				} else {
+					job.Close(consul.KV())
+				case "backup.export":
+					// Long-running: hand off without blocking the single dispatch
+					// goroutine, and do NOT delete the KV key here — ExportBackup
+					// deletes it on completion (processJob). Dedup so the
+					// still-present key isn't re-dispatched while in flight.
+					if markExportInFlight(job.ID) {
+						select {
+						case exportQueue <- job:
+						default:
+							clearExportInFlight(job.ID) // export worker busy; retry next watch tick
+						}
+					}
+				default:
 					backupQueue <- job
+					job.Close(consul.KV())
 				}
-				job.Close(consul.KV())
 			}
 
 		}
@@ -110,6 +135,15 @@ func processJob(consul *consulAPI.Client, job *types.Job) {
 		backup.Restore(consul, job)
 	case "backup.delete":
 		_ = backup.DeleteBackup(consul, job)
+	case "backup.export":
+		// The KV key and in-flight marker are cleared only after the export
+		// finishes. defer LIFO: Close (delete key) runs before clearing the
+		// marker, so the deleted key can't be re-dispatched in the gap.
+		func() {
+			defer clearExportInFlight(job.ID)
+			defer job.Close(consul.KV())
+			backup.ExportBackup(consul, job)
+		}()
 	case "firewall":
 		firewall.Perform(consul)
 	default:

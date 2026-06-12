@@ -16,7 +16,8 @@ type Job struct {
 	ArchiveName      string   `json:"archive"`       // Used for creating,restoring
 	FilePaths        []string `json:"file_paths"`    // Used for restoring (DEPRECATED)
 	AuditID          int      `json:"audit_id"`
-	Node             string   `json:"node"` // The requested node's hostname
+	Node             string   `json:"node"`         // The requested node's hostname
+	DownloadTTL      int      `json:"download_ttl"` // Requested presigned-URL lifetime (seconds), clamped agent-side. backup.export only.
 }
 
 func (job *Job) JSONEncode() []byte {
