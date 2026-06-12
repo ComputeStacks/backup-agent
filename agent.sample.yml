@@ -98,6 +98,28 @@ backups:
       # next backup.
       fs_user: "nobody"
       fs_group: "nogroup"
+
+  # Backup export ("download backup"): stream a chosen archive to S3 and return a
+  # presigned URL. Inert until s3.bucket is set. NOTE: the exported tar is
+  # PLAINTEXT (unlike the encrypted repo) — keep the bucket private, enable SSE,
+  # and set a short presigned-URL TTL plus an object-expiry lifecycle rule
+  # (and AbortIncompleteMultipartUpload) on the bucket.
+  export:
+    workers: 1 # dedicated export workers; each big export uses ~part_size*concurrency RAM
+    tar_filter: "" # optional borg --tar-filter, e.g. "gzip" (repo is already compressed)
+    s3:
+      endpoint: "" # empty = AWS; set an https URL for S3-compatible (MinIO/Ceph)
+      region: "us-east-1"
+      bucket: "" # REQUIRED to enable export
+      prefix: "exports/"
+      access_key: ""
+      secret_key: ""
+      force_path_style: false # true for MinIO / path-style endpoints
+      part_size_mb: 64 # must satisfy: part_size_mb >= ceil(max_archive_GB * 1024 / 10000)
+      concurrency: 4
+      sse: "AES256" # server-side encryption (the exported tar is unencrypted)
+      default_ttl_sec: 21600 # presigned URL lifetime when the request doesn't specify (6h)
+      max_ttl_sec: 86400 # hard cap on a requested TTL (24h)
 docker:
   version: "1.41"
 queue:

@@ -6,6 +6,7 @@ import (
 	"cs-agent/csevent"
 	"errors"
 	"github.com/docker/docker/api/types/container"
+	"io"
 	"reflect"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/spf13/viper"
 )
 
@@ -245,4 +247,73 @@ func (c *Container) Exec(jobCommands []string, event *csevent.ProjectEvent) (exi
 	}
 
 	return respStatus.ExitCode, s, nil
+}
+
+// ExecStream runs cmd in the container and streams stdout to w. Unlike Exec, it
+// does not buffer output in memory and does not allocate a TTY: a TTY merges
+// stderr into stdout and would corrupt a binary stream such as a borg
+// export-tar. stderr (borg --log-json diagnostics) is collected separately and
+// returned for the caller to parse.
+//
+// The exit code is read only after the stream reaches EOF (the exec has
+// finished); a still-running exec is treated as a failure so the caller never
+// mistakes a truncated stream for success.
+func (c *Container) ExecStream(cmd []string, stdout io.Writer) (exitCode int, stderr string, err error) {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.WithVersion(viper.GetString("docker.version")))
+	if err != nil {
+		return 1, "", err
+	}
+
+	isReady := false
+	for counter := 1; counter < 12; counter++ {
+		dockerContainer, errRunning := cli.ContainerInspect(ctx, c.ID)
+		if errRunning == nil && dockerContainer.State.Running {
+			isReady = true
+			break
+		} else if errRunning == nil {
+			containerLogger().Debug("Waiting for container before executing command", "container", dockerContainer.ID, "state", dockerContainer.State.Status)
+		} else {
+			containerLogger().Debug("Waiting for container before executing command", "error", errRunning.Error())
+			if counter > 2 {
+				break
+			}
+		}
+		time.Sleep(time.Second)
+	}
+	if !isReady {
+		return 1, "", errors.New("container never came online")
+	}
+
+	execResponse, err := cli.ContainerExecCreate(ctx, c.ID, container.ExecOptions{
+		Cmd:          cmd,
+		Tty:          false,
+		AttachStdout: true,
+		AttachStderr: true,
+	})
+	if err != nil {
+		return 1, "", err
+	}
+
+	resp, err := cli.ContainerExecAttach(ctx, execResponse.ID, container.ExecStartOptions{Tty: false})
+	if err != nil {
+		return 1, "", err
+	}
+	defer resp.Close()
+
+	// Demux the multiplexed stream: stdout (tar bytes) -> w, stderr -> buffer.
+	var stderrBuf bytes.Buffer
+	if _, copyErr := stdcopy.StdCopy(stdout, &stderrBuf, resp.Reader); copyErr != nil {
+		return 1, stderrBuf.String(), copyErr
+	}
+
+	// The stream is fully drained, so the exec has finished: read the exit code.
+	respStatus, inspectErr := cli.ContainerExecInspect(ctx, execResponse.ID)
+	if inspectErr != nil {
+		return 1, stderrBuf.String(), inspectErr
+	}
+	if respStatus.Running {
+		return 1, stderrBuf.String(), errors.New("exec still running after stream EOF")
+	}
+	return respStatus.ExitCode, stderrBuf.String(), nil
 }

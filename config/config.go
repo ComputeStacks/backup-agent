@@ -92,6 +92,23 @@ func ConfigureApp() {
 	viper.SetDefault("backups.borg.nfs_ssh.fs_user", "nobody")
 	viper.SetDefault("backups.borg.nfs_ssh.fs_group", "nogroup")
 
+	// Backup export ("download backup"): stream a chosen archive to S3 and hand
+	// back a presigned URL. Inert until backups.export.s3.bucket is set.
+	viper.SetDefault("backups.export.workers", 1)      // dedicated export worker count
+	viper.SetDefault("backups.export.tar_filter", "")  // optional borg --tar-filter (e.g. "gzip"); repo is already compressed
+	viper.SetDefault("backups.export.s3.endpoint", "") // empty = real AWS; set for S3-compatible (MinIO/Ceph)
+	viper.SetDefault("backups.export.s3.region", "us-east-1")
+	viper.SetDefault("backups.export.s3.bucket", "")
+	viper.SetDefault("backups.export.s3.prefix", "exports/")
+	viper.SetDefault("backups.export.s3.access_key", "")
+	viper.SetDefault("backups.export.s3.secret_key", "")
+	viper.SetDefault("backups.export.s3.force_path_style", false) // true for MinIO/path-style
+	viper.SetDefault("backups.export.s3.part_size_mb", 64)        // 5MB*10000=50GB ceiling is too tight
+	viper.SetDefault("backups.export.s3.concurrency", 4)          // parts in flight; mem ≈ part_size*concurrency
+	viper.SetDefault("backups.export.s3.sse", "AES256")           // server-side encryption (exported tar is plaintext)
+	viper.SetDefault("backups.export.s3.default_ttl_sec", 21600)  // presigned URL TTL when unspecified (6h)
+	viper.SetDefault("backups.export.s3.max_ttl_sec", 86400)      // hard cap on a requested TTL (24h)
+
 	// MariaDB Backup Configuration
 	viper.SetDefault("mariadb.lock_wait.query_type", "ALL")
 	viper.SetDefault("mariadb.lock_wait.timeout", "60")
