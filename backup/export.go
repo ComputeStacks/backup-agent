@@ -28,11 +28,37 @@ import (
 // the handoff doc in the computestacks repo. exportDetailFailed labels the
 // failure-detail PATCH and is agent-internal.
 const (
-	exportEventCode     = "agent-e7c1a9d4b6f20835"
-	exportDetailFailed  = "agent-3f8b2c1e7a9d4056"
-	exportEventLocale   = "volume.download"
-	exportArchiveSuffix = ".tar"
+	exportEventCode    = "agent-e7c1a9d4b6f20835"
+	exportDetailFailed = "agent-3f8b2c1e7a9d4056"
+	exportEventLocale  = "volume.download"
 )
+
+// exportArchiveSuffix returns the object-key extension for an export, derived
+// from the configured borg --tar-filter so the published filename matches the
+// actual bytes (e.g. a gzip filter yields ".tar.gz"). It reads the SAME viper
+// key that borg.ExportTar uses to apply the filter, so the two can't drift.
+// The filter may carry flags ("gzip -9"), so we key off the command word only;
+// an unrecognized filter falls back to ".tar".
+func exportArchiveSuffix() string {
+	filter := strings.TrimSpace(viper.GetString("backups.export.tar_filter"))
+	if filter == "" {
+		return ".tar"
+	}
+	switch strings.Fields(filter)[0] {
+	case "gzip", "pigz":
+		return ".tar.gz"
+	case "zstd":
+		return ".tar.zst"
+	case "bzip2", "pbzip2":
+		return ".tar.bz2"
+	case "xz":
+		return ".tar.xz"
+	case "lz4":
+		return ".tar.lz4"
+	default:
+		return ".tar"
+	}
+}
 
 var objectKeyUnsafe = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
 
@@ -130,7 +156,7 @@ func ExportBackup(consul *consulAPI.Client, job *types.Job) {
 	}
 
 	objectKey := jid + "/" + randomToken() + "/" +
-		sanitizeKeySegment(vol.Name) + "-" + sanitizeKeySegment(job.ArchiveName) + exportArchiveSuffix
+		sanitizeKeySegment(vol.Name) + "-" + sanitizeKeySegment(job.ArchiveName) + exportArchiveSuffix()
 
 	// Stream: borg export-tar (producer) -> io.Pipe -> S3 multipart upload.
 	pr, pw := io.Pipe()
