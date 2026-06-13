@@ -124,6 +124,11 @@ func New(cfg Config) (*Uploader, error) {
 			o.BaseEndpoint = aws.String(cfg.Endpoint)
 		}
 		o.UsePathStyle = cfg.ForcePathStyle
+		// S3-compatible stores (e.g. UpCloud/Dell ECS) reject the SDK's default
+		// CRC32 request checksums with XAmzContentSHA256Mismatch; only attach a
+		// checksum when the operation requires one, matching legacy S3 behavior.
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 	})
 	uploader := manager.NewUploader(client, func(u *manager.Uploader) {
 		if cfg.PartSizeMB > 0 {
@@ -135,6 +140,12 @@ func New(cfg Config) (*Uploader, error) {
 		// Abort the multipart upload (clean up parts) on any error, so a failed
 		// export never leaves a usable object or orphaned parts.
 		u.LeavePartsOnError = false
+		// The manager has its OWN checksum setting (defaults to WhenSupported),
+		// independent of the client option above. Left at the default it adds CRC32
+		// part checksums via an aws-chunked trailer that S3-compatible stores like
+		// ECS reject with XAmzContentSHA256Mismatch on UploadPart, so force it to
+		// WhenRequired here too.
+		u.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 	})
 	return &Uploader{cfg: cfg, client: client, uploader: uploader}, nil
 }
