@@ -8,6 +8,7 @@ import (
 	"cs-agent/s3upload"
 	"cs-agent/types"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -114,6 +115,13 @@ func ExportBackup(consul *consulAPI.Client, job *types.Job) {
 	}()
 
 	saveDownload(dlKey, &borg.ConsulDownload{Status: borg.DownloadStatusRunning, UpdatedAt: nowUnix()})
+
+	// Safety net: if we leave this function with the record still "running" — a
+	// recovered panic, or a terminal write that failed to reach Consul — flip it
+	// to failed so the UI doesn't show a perpetual spinner. Registered here so it
+	// only guards once a running record exists, and (by LIFO) it runs before the
+	// sentry.Recover defer during panic unwinding.
+	defer finalizeStuckExport(consul.KV(), dlKey)
 
 	// S3 destination (credentials are node-local config, never from the job).
 	s3cfg := s3upload.ConfigFromViper()
@@ -273,6 +281,31 @@ func saveDownload(key string, d *borg.ConsulDownload) {
 }
 
 func nowUnix() int64 { return time.Now().Unix() }
+
+// finalizeStuckExport flips a still-"running" record to failed. Deferred from
+// ExportBackup so an export that exits without durably recording a terminal
+// state doesn't leave a perpetual "running" record. That happens on a recovered
+// panic, or if the success/failure write itself failed to reach Consul
+// (saveDownload/putDownload log-and-swallow write errors) — in both cases
+// failed+retry is the correct outcome. Safe with no CAS: the export goroutine is
+// the sole writer of this record and this runs as that goroutine exits, so there
+// is no concurrent writer. The read is consistent so follower lag can't misread a
+// just-written "completed" as "running" and clobber a genuinely-successful export.
+func finalizeStuckExport(consul types.ConsulKV, dlKey string) {
+	pair, _, err := consul.Get(dlKey, &consulAPI.QueryOptions{RequireConsistent: true})
+	if err != nil || pair == nil {
+		return
+	}
+	var d borg.ConsulDownload
+	if json.Unmarshal(pair.Value, &d) != nil || d.Status != borg.DownloadStatusRunning {
+		return
+	}
+	putDownload(consul, dlKey, &borg.ConsulDownload{
+		Status:    borg.DownloadStatusFailed,
+		Error:     "export interrupted unexpectedly; please retry",
+		UpdatedAt: nowUnix(),
+	})
+}
 
 func randomToken() string {
 	b := make([]byte, 12)

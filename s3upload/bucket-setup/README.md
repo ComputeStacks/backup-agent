@@ -60,6 +60,8 @@ backups:
     workers: 1
     tar_filter: ""
     timeout_sec: 14400
+    cleanup_freq: "*/30 * * * *"
+    failed_retention_sec: 86400
     s3:
       endpoint: "https://fra1.restore.cldprs.nl"
       region: "europe-1"
@@ -71,7 +73,7 @@ backups:
       part_size_mb: 64
       concurrency: 4
       sse: "AES256"
-      default_ttl_sec: 21600
+      default_ttl_sec: 43200
       max_ttl_sec: 86400
 ```
 

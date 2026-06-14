@@ -29,7 +29,9 @@ func TestConfigureAppDefaults(t *testing.T) {
 		{"backups.export.timeout_sec", 14400},
 		{"backups.export.s3.part_size_mb", 64},
 		{"backups.export.s3.sse", "AES256"},
-		{"backups.export.s3.default_ttl_sec", 21600},
+		{"backups.export.s3.default_ttl_sec", 43200},
+		{"backups.export.cleanup_freq", "*/30 * * * *"},
+		{"backups.export.failed_retention_sec", 86400},
 	}
 
 	for _, tt := range tests {

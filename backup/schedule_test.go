@@ -107,6 +107,38 @@ func TestInitScheduleCompactDisabled(t *testing.T) {
 	}
 }
 
+// With an export bucket configured and the default cleanup_freq, the sweep
+// entry registers alongside check/prune/compact (4 total).
+func TestInitScheduleExportCleanupEnabled(t *testing.T) {
+	viper.Reset()
+	config.ConfigureApp()
+	viper.Set("backups.export.s3.bucket", "team-exports")
+
+	c := cron.New()
+	mockConsul := &MockConsulKV{store: make(map[string][]byte)}
+	InitSchedule(mockConsul, c)
+
+	if len(c.Entries()) != 4 {
+		t.Errorf("with export bucket + cleanup_freq set, expected 4 cron entries (check, prune, compact, sweep), got %d", len(c.Entries()))
+	}
+}
+
+// A bucket but an empty cleanup_freq must NOT register the sweep entry.
+func TestInitScheduleExportCleanupDisabled(t *testing.T) {
+	viper.Reset()
+	config.ConfigureApp()
+	viper.Set("backups.export.s3.bucket", "team-exports")
+	viper.Set("backups.export.cleanup_freq", "")
+
+	c := cron.New()
+	mockConsul := &MockConsulKV{store: make(map[string][]byte)}
+	InitSchedule(mockConsul, c)
+
+	if len(c.Entries()) != 3 {
+		t.Errorf("with cleanup_freq empty, expected 3 cron entries (check, prune, compact), got %d", len(c.Entries()))
+	}
+}
+
 type MockConsulKV struct {
 	store map[string][]byte
 }

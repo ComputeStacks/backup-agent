@@ -108,6 +108,8 @@ backups:
     workers: 1 # dedicated export workers; each big export uses ~part_size*concurrency RAM
     tar_filter: "" # optional borg --tar-filter, e.g. "gzip" (repo is already compressed)
     timeout_sec: 14400 # hard cap on a single export (seconds); a hung borg/S3 fails instead of holding the repo lock
+    cleanup_freq: "*/30 * * * *" # how often to reap stale download records from Consul (the S3 lifecycle deletes the object; this removes the now-dead KV record so the UI reverts to "request download"); "" disables
+    failed_retention_sec: 86400 # keep a failed export's record this long before reaping (24h)
     s3:
       endpoint: "" # empty = AWS; set an https URL for S3-compatible (MinIO/Ceph)
       region: "us-east-1"
@@ -119,7 +121,7 @@ backups:
       part_size_mb: 64 # must satisfy: part_size_mb >= ceil(max_archive_GB * 1024 / 10000)
       concurrency: 4
       sse: "AES256" # server-side encryption (the exported tar is unencrypted)
-      default_ttl_sec: 21600 # presigned URL lifetime when the request doesn't specify (6h)
+      default_ttl_sec: 43200 # presigned URL lifetime when the request doesn't specify (12h)
       max_ttl_sec: 86400 # hard cap on a requested TTL (24h)
 docker:
   version: "1.41"

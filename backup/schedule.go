@@ -50,6 +50,23 @@ func InitSchedule(consul types.ConsulKV, c *cron.Cron) {
 		backupLogger().Info("Compaction scheduling disabled (backups.compact_freq is empty)")
 	}
 
+	// Periodic cleanup of stale export download records (completed past their
+	// presigned-URL expiry, failed past retention). Inert unless export is
+	// configured; an empty cleanup_freq disables it. Registered last so a bad
+	// cron string can't short-circuit the registrations above.
+	if viper.GetString("backups.export.s3.bucket") != "" {
+		if cleanupFreq := viper.GetString("backups.export.cleanup_freq"); cleanupFreq != "" {
+			_, err = c.AddFunc(cleanupFreq, func() { sweepExports(consul) })
+			if err != nil {
+				backupLogger().Warn("Fatal error scheduling backups.export.cleanup_freq", "error", err.Error())
+				sentry.CaptureException(err)
+				return
+			}
+		} else {
+			backupLogger().Info("Export record cleanup disabled (backups.export.cleanup_freq is empty)")
+		}
+	}
+
 }
 
 func scheduleBackup(consul types.ConsulKV, c *cron.Cron) {
@@ -104,6 +121,7 @@ func scheduleBackup(consul types.ConsulKV, c *cron.Cron) {
 				}
 				vol.ClearScheduledJob(consul)
 				consulDeletePath(consul, "volumes/"+vol.Name)
+				deleteVolumeExports(consul, vol.Name) // reap this volume's export download records
 				_, deleteRepoErr := repo.Delete()
 				repo.StopContainer()
 				if deleteRepoErr != nil {

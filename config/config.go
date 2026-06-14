@@ -103,12 +103,14 @@ func ConfigureApp() {
 	viper.SetDefault("backups.export.s3.prefix", "exports/")
 	viper.SetDefault("backups.export.s3.access_key", "")
 	viper.SetDefault("backups.export.s3.secret_key", "")
-	viper.SetDefault("backups.export.s3.force_path_style", false) // true for MinIO/path-style
-	viper.SetDefault("backups.export.s3.part_size_mb", 64)        // 5MB*10000=50GB ceiling is too tight
-	viper.SetDefault("backups.export.s3.concurrency", 4)          // parts in flight; mem ≈ part_size*concurrency
-	viper.SetDefault("backups.export.s3.sse", "AES256")           // server-side encryption (exported tar is plaintext)
-	viper.SetDefault("backups.export.s3.default_ttl_sec", 21600)  // presigned URL TTL when unspecified (6h)
-	viper.SetDefault("backups.export.s3.max_ttl_sec", 86400)      // hard cap on a requested TTL (24h)
+	viper.SetDefault("backups.export.s3.force_path_style", false)   // true for MinIO/path-style
+	viper.SetDefault("backups.export.s3.part_size_mb", 64)          // 5MB*10000=50GB ceiling is too tight
+	viper.SetDefault("backups.export.s3.concurrency", 4)            // parts in flight; mem ≈ part_size*concurrency
+	viper.SetDefault("backups.export.s3.sse", "AES256")             // server-side encryption (exported tar is plaintext)
+	viper.SetDefault("backups.export.s3.default_ttl_sec", 43200)    // presigned URL TTL when unspecified (12h)
+	viper.SetDefault("backups.export.s3.max_ttl_sec", 86400)        // hard cap on a requested TTL (24h)
+	viper.SetDefault("backups.export.cleanup_freq", "*/30 * * * *") // periodic reap of stale download records from Consul; "" disables
+	viper.SetDefault("backups.export.failed_retention_sec", 86400)  // keep a failed export's record this long before reaping (24h)
 
 	// MariaDB Backup Configuration
 	viper.SetDefault("mariadb.lock_wait.query_type", "ALL")
