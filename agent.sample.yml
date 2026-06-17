@@ -106,7 +106,7 @@ backups:
   # (and AbortIncompleteMultipartUpload) on the bucket.
   export:
     workers: 1 # dedicated export workers; each big export uses ~part_size*concurrency RAM
-    tar_filter: "" # optional borg --tar-filter, e.g. "gzip" (repo is already compressed)
+    tar_filter: "gzip" # borg --tar-filter for the exported tar; "" disables. export-tar emits the ORIGINAL (decompressed) files, so the repo's own compression does NOT carry over — without a filter the upload is full plaintext size. The object suffix tracks this (gzip -> .tar.gz).
     timeout_sec: 14400 # hard cap on a single export (seconds); a hung borg/S3 fails instead of holding the repo lock
     cleanup_freq: "*/30 * * * *" # how often to reap stale download records from Consul (the S3 lifecycle deletes the object; this removes the now-dead KV record so the UI reverts to "request download"); "" disables
     failed_retention_sec: 86400 # keep a failed export's record this long before reaping (24h)

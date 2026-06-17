@@ -58,7 +58,7 @@ The script ends with the exact block to paste into the node's `agent.yml`:
 backups:
   export:
     workers: 1
-    tar_filter: ""
+    tar_filter: "gzip"
     timeout_sec: 14400
     cleanup_freq: "*/30 * * * *"
     failed_retention_sec: 86400

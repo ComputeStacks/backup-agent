@@ -199,7 +199,7 @@ yaml="$(cat <<YAML
 backups:
   export:
     workers: 1
-    tar_filter: ""
+    tar_filter: "gzip"
     timeout_sec: 14400
     s3:
       endpoint: "${ENDPOINT}"
