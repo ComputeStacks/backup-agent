@@ -1,0 +1,72 @@
+# GoReleaser config — builds the native binary, packages a .deb (nfpm), and cuts
+# the GitHub Release with notes from CHANGELOG.md (passed via --release-notes).
+# The apt-repo publish to S3 is a separate step in .github/workflows/release.yml
+# (it reuses the S3-compatible client from cmd/apt-publish, not GoReleaser's blob
+# publisher, to inherit the path-style / checksum-when-required handling).
+version: 2
+project_name: cs-agent
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: cs-agent
+    main: .            # main package is at the repo root (main.go)
+    binary: cs-agent
+    env:
+      - CGO_ENABLED=0  # static, pure-Go (modernc later); no libssl link
+    goos: [linux]
+    goarch: [amd64, arm64]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w
+      # main.go can add `var version, commit, date string` to surface these:
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .CommitDate }}
+
+archives:
+  - id: cs-agent
+    formats: [tar.gz]
+    name_template: "cs-agent_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+nfpms:
+  - id: cs-agent
+    package_name: cs-agent
+    vendor: ComputeStacks
+    homepage: https://github.com/computestacks/backup-agent
+    maintainer: ComputeStacks <support@computestacks.com>
+    description: ComputeStacks node agent (cs-agent).
+    license: proprietary
+    formats: [deb]
+    bindir: /usr/bin
+    # Replaces the Dockerfile's `apt-get install iptables ca-certificates ...`.
+    # NOTE: validate package names on Debian 12/13 (borgbackup, iptables present).
+    dependencies:
+      - borgbackup
+      - iptables
+      - ca-certificates
+    contents:
+      - src: packaging/cs-agent.service
+        dst: /lib/systemd/system/cs-agent.service
+      - src: agent.sample.yml
+        dst: /usr/share/doc/cs-agent/agent.sample.yml
+    scripts:
+      postinstall: packaging/postinstall.sh
+      preremove: packaging/preremove.sh
+
+checksum:
+  name_template: "checksums.txt"
+
+# Release notes come from CHANGELOG.md via `--release-notes` (see the workflow),
+# so disable GoReleaser's commit-derived changelog.
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: computestacks
+    name: backup-agent
+  draft: false
+  prerelease: auto

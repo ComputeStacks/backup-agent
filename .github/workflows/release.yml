@@ -1,0 +1,81 @@
+name: Release
+
+# Tag-triggered. The signing key + S3 creds are only exposed here (tags on the
+# base repo), never on PRs from forks.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write        # create the GitHub Release + upload assets
+
+# The apt repo is stateful (index rebuilt from the full pool); never publish two
+# releases concurrently.
+concurrency:
+  group: apt-publish
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Gate secrets behind a protected Environment (add required reviewers in repo settings).
+    environment: release
+    env:
+      APT_S3_ENDPOINT: ${{ vars.APT_S3_ENDPOINT }}
+      APT_S3_REGION: ${{ vars.APT_S3_REGION }}
+      APT_S3_BUCKET: ${{ vars.APT_S3_BUCKET }}
+      APT_S3_PREFIX: ${{ vars.APT_S3_PREFIX }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.APT_S3_ACCESS_KEY }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.APT_S3_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history + tags for versioning
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Install apt-ftparchive
+        run: sudo apt-get update && sudo apt-get install -y apt-utils
+
+      - name: Import GPG signing key
+        id: gpg
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Extract release notes from CHANGELOG.md
+        run: ./scripts/changelog-extract.sh "${GITHUB_REF_NAME}" > /tmp/notes.md
+
+      - name: Build, package .deb, and cut the GitHub Release
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean --release-notes=/tmp/notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- shared apt repo: Approach A (append-only pool + index rebuilt from the full pool) ---
+      # cs-agent is the SOLE publisher of the shared index today, so this is race-free. When a
+      # 2nd package's CI ships, move index rebuild+sign into a single index-builder (see
+      # packaging/README.md "Scaling to multiple packages"); reconcile-apt-repo.yml already
+      # rebuilds the shared index from the pool on a timer, on this same concurrency group.
+      - name: Pull existing pool from S3
+        run: |
+          mkdir -p aptrepo
+          go run ./cmd/apt-publish pull aptrepo
+
+      - name: Add new .debs to the pool
+        run: |
+          mkdir -p aptrepo/pool/main/c/cs-agent
+          cp dist/*.deb aptrepo/pool/main/c/cs-agent/
+
+      - name: Rebuild + sign the apt index
+        env:
+          APT_GPG_KEY_ID: ${{ steps.gpg.outputs.fingerprint }}
+        run: ./scripts/build-apt-repo.sh aptrepo
+
+      - name: Publish apt repo to S3 (Release files last)
+        run: go run ./cmd/apt-publish push aptrepo

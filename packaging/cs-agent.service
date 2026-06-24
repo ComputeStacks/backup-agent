@@ -1,0 +1,40 @@
+[Unit]
+Description=ComputeStacks Node Agent (cs-agent)
+Documentation=https://github.com/computestacks/backup-agent
+Requires=docker.service
+After=docker.service
+# Consul is still required until coordination leaves it (kv-store re-arch, Phase 3); drop both lines then.
+Wants=consul.service
+After=consul.service
+ConditionPathExists=/etc/computestacks/agent.yml
+# Crash-loop backstop: allow brisk restarts, but if it dies >StartLimitBurst times in
+# StartLimitIntervalSec, stop hammering. NOTE (runtime doc §3): the goal is "alert and keep
+# trying slowly," not "give up forever" — pair this with a reset-failed timer or set
+# StartLimitIntervalSec=0 once the agent has internal restart backoff. Tune before fleet rollout.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+# TODO(reliability, runtime doc §3): switch to Type=notify + WatchdogSec once the agent
+# implements sd_notify(READY=1) at startup and sd_notify(WATCHDOG=1) from the reconcile loop.
+# Without that agent code, Type=notify would hang startup and the watchdog would kill it.
+#   Type=notify
+#   WatchdogSec=30s
+ExecStart=/usr/bin/cs-agent
+Restart=always
+RestartSec=3
+SyslogIdentifier=cs-agent
+
+# The agent is node infrastructure now: under memory pressure the kernel should kill
+# customer containers before it. (Native systemd can apply this to the real process —
+# the old `docker run` unit could not.)
+OOMScoreAdjust=-900
+Slice=cs-agent.slice
+
+# Runs as root (needs the docker socket + NET_ADMIN for firewall). Further hardening
+# (User=, AmbientCapabilities=CAP_NET_ADMIN, ProtectSystem=, etc.) is a follow-up once
+# the exact privilege set is pinned down.
+
+[Install]
+WantedBy=multi-user.target
