@@ -42,6 +42,10 @@ func ConfigureApp() {
 	viper.SetDefault("consul.token", "")
 	viper.SetDefault("consul.tls", false)
 
+	// Embedded SQLite data plane (store/): control.db + per-project metadata DBs
+	// live under this directory. One key for now; the HTTP layer is wired later.
+	viper.SetDefault("store.data_dir", "/var/lib/cs-agent")
+
 	viper.SetDefault("backups.enabled", true)
 	viper.SetDefault("backups.check_freq", "* * * * *")
 	viper.SetDefault("backups.prune_freq", "15 1 * * *")

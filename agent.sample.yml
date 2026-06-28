@@ -5,6 +5,10 @@ host:
   iptables-cmd: iptables
 computestacks:
   host: http://localhost:3000
+store:
+  # Embedded SQLite data plane: control.db (node tenant/auth map) plus one
+  # metadata DB per project live under this directory.
+  data_dir: /var/lib/cs-agent
 consul:
   host: 127.0.0.1:8500
   token: "" # Consul Auth Token
