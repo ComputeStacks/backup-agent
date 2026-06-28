@@ -2,12 +2,10 @@ package firewall
 
 import (
 	"encoding/json"
-	"fmt"
+	"os"
+
 	"github.com/getsentry/sentry-go"
 	consulAPI "github.com/hashicorp/consul/api"
-	"os"
-	"os/exec"
-	"strconv"
 )
 
 type NatRules struct {
@@ -22,6 +20,17 @@ type NatRule struct {
 	Driver string `json:"driver"` // calico_docker bridge
 }
 
+// loadExpectedRules reads this node's desired published-port state from Consul
+// (nodes/<hostname>/ingress_rules) into NatRules. This is the desired-state
+// source for the native cs_agent nftables renderer; it is unchanged by the
+// nftables migration (the renderer was swapped, not the source).
+//
+// Return contract (relied on by Perform):
+//   - (rules, nil)  -- rules parsed successfully (may have zero entries).
+//   - (nil,   nil)  -- no ingress_rules key for this node: a legitimate "no
+//     published ports" desired state. Perform renders an empty table.
+//   - (nil,   err)  -- a load or parse error: Perform leaves kernel state
+//     untouched and retries next reconcile.
 func loadExpectedRules(consul *consulAPI.Client) (rules *NatRules, err error) {
 	hostname, _ := os.Hostname()
 	kv := consul.KV()
@@ -47,40 +56,4 @@ func loadExpectedRules(consul *consulAPI.Client) (rules *NatRules, err error) {
 		return nil, jsonErr
 	}
 	return rules, err
-}
-
-func (r *NatRule) apply() {
-	execCmd := fmt.Sprintf("%s -t nat -A %s", iptablesCmd(), r.iptableRule())
-	csFirewallLog().Info("Adding NAT Rule", "rule", execCmd)
-	cmd := exec.Command("bash", "-c", execCmd)
-
-	output, _ := cmd.CombinedOutput()
-	if string(output) != "" {
-		csFirewallLog().Debug("Add Nat Host Rule", "result", string(output))
-	}
-	return
-}
-
-func (r *NatRule) iptableRule() string {
-	return "expose-ports -p " + r.Proto + " -m " + r.Proto + " --dport " + strconv.Itoa(r.Nat) + " -j DNAT --to-destination " + r.Dest + ":" + strconv.Itoa(r.Port)
-}
-
-// Provide a list of expected rules for this node
-func (r *NatRule) hostRuleExists(existingRules []string) bool {
-	for _, l := range existingRules {
-		if "-A "+r.iptableRule() == l {
-			return true
-		}
-	}
-	return false
-}
-
-// Given a set of expected rules, determine if a rule should exist.
-func (r *NatRules) ruleExists(line string) bool {
-	for _, rule := range r.Rules {
-		if "-A "+rule.iptableRule() == line {
-			return true
-		}
-	}
-	return false
 }
