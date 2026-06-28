@@ -28,13 +28,13 @@ Idempotent, additive, safe to re-run. Given a bucket (and optionally a group + u
 ```bash
 # full setup (bucket + group + user), mint a key and print it into the YAML:
 BUCKET=team-exports GROUP=team USER=team-agent CREATE_KEY=1 \
-  ENDPOINT=https://fra1.restore.cldprs.nl ./setup-export-bucket.sh
+  ENDPOINT=https://s3.example.com ./setup-export-bucket.sh
 
 # add another bucket to the SAME group (additive — existing buckets keep access):
-BUCKET=team-exports-2 GROUP=team ENDPOINT=https://fra1.restore.cldprs.nl ./setup-export-bucket.sh
+BUCKET=team-exports-2 GROUP=team ENDPOINT=https://s3.example.com ./setup-export-bucket.sh
 
 # bucket + lifecycle only (no IAM):
-BUCKET=solo-exports ENDPOINT=https://fra1.restore.cldprs.nl ./setup-export-bucket.sh
+BUCKET=solo-exports ENDPOINT=https://s3.example.com ./setup-export-bucket.sh
 ```
 
 **Env vars:** `BUCKET` and `ENDPOINT` required. `GROUP` optional; `USER` optional
@@ -63,7 +63,7 @@ backups:
     cleanup_freq: "*/30 * * * *"
     failed_retention_sec: 86400
     s3:
-      endpoint: "https://fra1.restore.cldprs.nl"
+      endpoint: "https://s3.example.com"
       region: "europe-1"
       bucket: "team-exports"
       prefix: "exports/"
@@ -120,9 +120,9 @@ services = upcloud
 request_checksum_calculation = when_required
 response_checksum_validation = when_required
 [services upcloud]
-s3  = { endpoint_url = https://fra1.restore.cldprs.nl }
-iam = { endpoint_url = https://fra1.restore.cldprs.nl:4443/iam }
-sts = { endpoint_url = https://fra1.restore.cldprs.nl:4443/sts }
+s3  = { endpoint_url = https://s3.example.com }
+iam = { endpoint_url = https://s3.example.com:4443/iam }
+sts = { endpoint_url = https://s3.example.com:4443/sts }
 ```
 
 ## ECS gotchas (all discovered + worked around)

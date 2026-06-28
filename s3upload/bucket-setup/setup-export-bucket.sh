@@ -20,7 +20,7 @@
 #
 # Usage:
 #   BUCKET=team-exports GROUP=team USER=team-agent \
-#   ENDPOINT=https://fra1.restore.cldprs.nl ./setup-export-bucket.sh
+#   ENDPOINT=https://s3.example.com ./setup-export-bucket.sh
 #
 # Options (env): PREFIX=exports/  POLICY=<group>-export  LIFECYCLE=1  CREATE_KEY=0
 #   The script always prints a paste-ready agent.yml (backups.export.s3) block at the
@@ -29,7 +29,7 @@
 set -euo pipefail
 
 : "${BUCKET:?set BUCKET}"
-: "${ENDPOINT:?set ENDPOINT, e.g. https://fra1.restore.cldprs.nl}"
+: "${ENDPOINT:?set ENDPOINT, e.g. https://s3.example.com}"
 : "${PREFIX:=exports/}"
 : "${LIFECYCLE:=1}"
 GROUP="${GROUP:-}"
