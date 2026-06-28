@@ -57,6 +57,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # A semver prerelease tag (e.g. v2.0.0-rc1) MUST become a deb version with '~'
+      # (2.0.0~rc1) so it sorts BELOW the final 2.0.0. A '2.0.0-rc1' deb sorts ABOVE
+      # 2.0.0 (deb revision ordering), so the final would never supersede the rc.
+      # nfpm's default semver schema does this; this step fails loudly if it ever stops.
+      - name: Guard — prerelease debs must use '~'
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            for deb in dist/*.deb; do
+              ver="$(dpkg-deb -f "$deb" Version)"
+              echo "$deb -> $ver"
+              case "$ver" in
+                *'~'*) ;;
+                *) echo "::error::prerelease tag ${GITHUB_REF_NAME} produced deb version '$ver' without '~' (would sort above the final release)"; exit 1 ;;
+              esac
+            done
+          fi
+
       # --- shared apt repo: Approach A (append-only pool + index rebuilt from the full pool) ---
       # cs-agent is the SOLE publisher of the shared index today, so this is race-free. When a
       # 2nd package's CI ships, move index rebuild+sign into a single index-builder (see

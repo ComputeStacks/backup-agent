@@ -1,5 +1,55 @@
 # Changelog
 
+## v2.0.0-rc1
+
+Major release — the agent becomes the node's **data plane** (Phase 0 of the Consul-retirement /
+node-autonomy re-architecture). Three independent changes ship together; production rolls out staged
+(native deploy first, then the firewall and metadata cutovers, validated on a canary).
+
+- [CHANGE] **Native deployment.** The agent now runs as a **native systemd binary installed from a
+  self-hosted, GPG-signed apt repo**, replacing the `docker run` container unit. The container image
+  is kept for local dev only. `cs-agent -version` reports the build version/commit/date.
+- [CHANGE] **nftables firewall.** Published-port DNAT/forwarding is rendered into a native `cs_agent`
+  nftables table via netlink, replacing the iptables shell-out + string-diff. Cross-project isolation
+  stays in `DOCKER-USER`. **Fail-closed:** published ports are closed until the first reconcile. Reads
+  the same `ingress_rules` desired state. (Relies on the project bridges' `nat-unprotected` mode, under
+  which Docker already accepts the forwarded ingress.)
+- [FEATURE] **Customer metadata served by the agent.** A new HTTP API on `node.primary_ip:8500` serves
+  per-project customer metadata from **embedded SQLite** — no more Consul KV for the `/db/` space, and
+  **no value size cap** (kills the 512 KB ceiling). Bearer→tenant auth + a per-node admin Bearer; a
+  compatibility shim serves the legacy `…/metadata?raw=true` read. Migrations are rollback-tolerant
+  (additive + schema-version guard).
+
+### Upgrading a node to v2.0.0
+
+Take a maintenance window — the firewall cutover (+ optional reboot) briefly closes published ports.
+All nodes must be **Debian 12/13** (`iptables` = the nft backend). Snapshot the firewall first:
+`iptables-save > /root/iptables.pre-upgrade`.
+
+1. **Native binary** — add the apt source + keyring, stop the old container unit, install:
+   ```
+   curl -fsSL https://repo.computestacks.com/public/computestacks.gpg.asc \
+     | gpg --dearmor | sudo tee /etc/apt/keyrings/computestacks.gpg >/dev/null
+   echo "deb [signed-by=/etc/apt/keyrings/computestacks.gpg] https://repo.computestacks.com/public stable main" \
+     | sudo tee /etc/apt/sources.list.d/computestacks.list
+   sudo systemctl disable --now cs-agent; docker rm -f cs-agent 2>/dev/null || true
+   sudo rm -f /etc/systemd/system/cs-agent.service   # the package unit lives in /lib/systemd/system
+   sudo apt-get update && sudo apt-get install -y cs-agent
+   ```
+2. **Metadata / Consul port** — the agent binds `:8500`, so Consul's HTTP listener moves to `:8502`
+   (provisioner); confirm the agent's `consul.host` + the admin-token hash are configured. New
+   containers receive `CS_NODE_ID`; existing ones use the compatibility shim — no recreation needed.
+3. **Firewall** — the agent renders the `cs_agent` nft table on start (`nft list table ip cs_agent`).
+   After deploying the updated host-firewall script (which drops the `10000:50000` INPUT range and the
+   old `expose-ports`/`container-inbound` chains), **reboot** for a clean ruleset (or remove the old
+   rules manually). Verify published ports still reach containers and `iptables -S` shows none of the
+   old artifacts.
+   - **Rollback:** reinstall the previous `.deb` **and** `sudo iptables-restore < /root/iptables.pre-upgrade`;
+     re-bind Consul to `:8500`. Do **not** roll back across a non-additive DB migration.
+
+The controller/provisioner changes (`CS_NODE_ID` injection, the Consul port move, the host-firewall
+trim, the apt source) ship alongside — coordinate per the rollout runbook.
+
 ## v1.10.0
 
 - [FEATURE] Backup export ("download backup"): a new `backup.export` job streams a chosen archive to S3 (or S3-compatible storage) via `borg export-tar --bypass-lock` and publishes a presigned download URL to Consul KV (`borg/exports/<volume>/<jid>`) for ComputeStacks to read. Streams with no scratch disk, runs on a dedicated worker so it never blocks scheduled backups, and serializes against compaction per-repo. Configure under `backups.export.*`; inert until `backups.export.s3.bucket` is set. NOTE: the exported tar is plaintext (unlike the encrypted repo) — keep the bucket private, enable SSE, and use a short URL TTL + object-expiry lifecycle rule.
