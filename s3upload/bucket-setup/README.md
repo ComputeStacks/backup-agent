@@ -1,4 +1,4 @@
-# Export bucket setup (UpCloud Managed Object Storage / Dell ECS)
+# Bucket setup — export + apt (UpCloud Managed Object Storage / Dell ECS)
 
 Tooling to provision the buckets the cs-agent exports backups to. The target is
 **UpCloud Managed Object Storage** — S3-compatible, on a **Dell ECS** backend
@@ -28,13 +28,13 @@ Idempotent, additive, safe to re-run. Given a bucket (and optionally a group + u
 ```bash
 # full setup (bucket + group + user), mint a key and print it into the YAML:
 BUCKET=team-exports GROUP=team USER=team-agent CREATE_KEY=1 \
-  ENDPOINT=https://fra1.restore.cldprs.nl ./setup-export-bucket.sh
+  ENDPOINT=https://s3.example.com ./setup-export-bucket.sh
 
 # add another bucket to the SAME group (additive — existing buckets keep access):
-BUCKET=team-exports-2 GROUP=team ENDPOINT=https://fra1.restore.cldprs.nl ./setup-export-bucket.sh
+BUCKET=team-exports-2 GROUP=team ENDPOINT=https://s3.example.com ./setup-export-bucket.sh
 
 # bucket + lifecycle only (no IAM):
-BUCKET=solo-exports ENDPOINT=https://fra1.restore.cldprs.nl ./setup-export-bucket.sh
+BUCKET=solo-exports ENDPOINT=https://s3.example.com ./setup-export-bucket.sh
 ```
 
 **Env vars:** `BUCKET` and `ENDPOINT` required. `GROUP` optional; `USER` optional
@@ -63,7 +63,7 @@ backups:
     cleanup_freq: "*/30 * * * *"
     failed_retention_sec: 86400
     s3:
-      endpoint: "https://fra1.restore.cldprs.nl"
+      endpoint: "https://s3.example.com"
       region: "europe-1"
       bucket: "team-exports"
       prefix: "exports/"
@@ -77,6 +77,37 @@ backups:
       max_ttl_sec: 86400
 ```
 
+## `setup-apt-bucket.sh`
+
+Provisions the **public apt repository** bucket — the read-OPEN counterpart to the export
+bucket. One bucket holds the whole repo (`dists/` + `pool/`) for every ComputeStacks **OSS**
+package, served **anonymously over HTTPS** so nodes `apt-get` with no credentials. Idempotent /
+additive; shares the `~/.aws/config` prereqs + ECS gotchas below.
+
+Differs from the export bucket: **anonymous public-read** (`GetObject` only — no `ListBucket`, so
+it can't be enumerated; verified that ECS honors a `Principal:"*"` policy + serves anonymous GET
+with a real 404 on a missing key), **no object-expiry lifecycle** (`pool/` is append-only for
+rollback), and the IAM user is a **CI publisher** (Put/Get/Delete on `<bucket>/*` + ListBucket)
+whose key becomes the GitHub `release` Environment's `APT_S3_*` secrets.
+
+```bash
+# bucket + anonymous-read policy only:
+PROFILE=cs-repo ENDPOINT=https://repo.computestacks.com BUCKET=public ./setup-apt-bucket.sh
+
+# + publisher IAM user, mint its key (secret → ./<iam_user>.creds, chmod 600, NEVER printed):
+PROFILE=cs-repo ENDPOINT=https://repo.computestacks.com BUCKET=public \
+  GROUP=apt-publishers IAM_USER=apt-publisher CREATE_KEY=1 ./setup-apt-bucket.sh
+```
+
+**Env vars:** `ENDPOINT` required; `BUCKET` (default `public`); `PROFILE` (CLI profile to use);
+`GROUP` optional; `IAM_USER` optional (requires `GROUP` — note `IAM_USER`, not `USER`, to avoid the
+shell's login-name env var); `CREATE_KEY=1` mints + writes the key to `./<iam_user>.creds`;
+`ABORT_MPU_DAYS` (default `0` = no lifecycle at all). It prints the GitHub `release` Environment
+vars + secrets and the node `sources.list` line.
+
+**Live:** `public` bucket provisioned at `https://repo.computestacks.com/public` (anonymous read
+verified); signing key served at `…/public/computestacks.gpg.asc`; publisher user `apt-publisher`.
+
 ## Prerequisites — `~/.aws/config`
 
 The CLI must point at this ECS instance and work around its quirks. The default
@@ -89,9 +120,9 @@ services = upcloud
 request_checksum_calculation = when_required
 response_checksum_validation = when_required
 [services upcloud]
-s3  = { endpoint_url = https://fra1.restore.cldprs.nl }
-iam = { endpoint_url = https://fra1.restore.cldprs.nl:4443/iam }
-sts = { endpoint_url = https://fra1.restore.cldprs.nl:4443/sts }
+s3  = { endpoint_url = https://s3.example.com }
+iam = { endpoint_url = https://s3.example.com:4443/iam }
+sts = { endpoint_url = https://s3.example.com:4443/sts }
 ```
 
 ## ECS gotchas (all discovered + worked around)
