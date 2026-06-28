@@ -7,6 +7,8 @@ import (
 	"cs-agent/job"
 	"cs-agent/log"
 	"cs-agent/s3upload"
+	"flag"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -16,11 +18,28 @@ import (
 	"github.com/spf13/viper"
 )
 
+// Build-info, injected at release time via GoReleaser ldflags
+// (-X main.version / -X main.commit / -X main.date). Defaults apply to
+// `go build` / `go run` so behavior is unchanged when unset.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	var wg sync.WaitGroup
-	v := "1.10.0"
+
+	showVersion := flag.Bool("version", false, "print version information and exit")
+	flag.Parse()
+	if *showVersion {
+		fmt.Printf("cs-agent %s (commit %s, built %s)\n", version, commit, date)
+		return
+	}
+
 	config.ConfigureApp()
-	configureSentry(v)
+	configureSentry(version)
+	log.New().Info("Starting CS-Agent", "version", version, "commit", commit, "date", date)
 	validateExportConfig()
 	ensureConsulReady()
 	wg.Add(1) // job.Watch(); setupWorkers() registers each worker pool's own count
@@ -33,7 +52,6 @@ func main() {
 		backup.InitSchedule(consul.KV(), c)
 	}
 	go job.Watch(&wg)
-	log.New().Info("Starting CS-Agent", "version", v)
 	log.New().Info("Agent Configuration", "environment", config.ReleaseEnvironment())
 	log.New().Info("Agent Configuration", "backupWorkers", viper.GetInt("queue.numworkers")+1)
 	log.New().Info("Agent Configuration", "firewallWorkers", 1)
