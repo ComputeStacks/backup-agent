@@ -41,6 +41,10 @@ nfpms:
     license: proprietary
     formats: [deb]
     bindir: /usr/bin
+    # Debian-conventional name: cs-agent_<version>_<arch>.deb (version uses '~rc' for
+    # prereleases, no OS segment). Without this, GoReleaser's archive template produced
+    # cs-agent_2.0.0-rc1_linux_amd64.deb (cosmetic, but non-conventional).
+    file_name_template: "{{ .ConventionalFileName }}"
     # Replaces the Dockerfile's `apt-get install iptables ca-certificates ...`.
     # NOTE: validate package names on Debian 12/13 (borgbackup, iptables present).
     dependencies:

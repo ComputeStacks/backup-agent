@@ -47,7 +47,7 @@ jobs:
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
 
       - name: Extract release notes from CHANGELOG.md
-        run: ./scripts/changelog-extract.sh "${GITHUB_REF_NAME}" > /tmp/notes.md
+        run: ./scripts/changelog-extract.sh "${GITHUB_REF_NAME}" | tee /tmp/notes.md
 
       - name: Build, package .deb, and cut the GitHub Release
         uses: goreleaser/goreleaser-action@v6
@@ -56,6 +56,14 @@ jobs:
           args: release --clean --release-notes=/tmp/notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # GoReleaser's --release-notes did not reliably populate the release body (v2.0.0-rc1
+      # shipped empty), so set it explicitly from the extracted CHANGELOG section. gh is
+      # preinstalled on ubuntu-latest and GITHUB_TOKEN has contents:write.
+      - name: Set GitHub Release notes from CHANGELOG
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${GITHUB_REF_NAME}" --repo "${{ github.repository }}" --notes-file /tmp/notes.md
 
       # A semver prerelease tag (e.g. v2.0.0-rc1) MUST become a deb version with '~'
       # (2.0.0~rc1) so it sorts BELOW the final 2.0.0. A '2.0.0-rc1' deb sorts ABOVE

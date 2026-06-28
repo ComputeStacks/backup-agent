@@ -40,12 +40,27 @@ All nodes must be **Debian 12/13** (`iptables` = the nft backend). Snapshot the 
    (provisioner); confirm the agent's `consul.host` + the admin-token hash are configured. New
    containers receive `CS_NODE_ID`; existing ones use the compatibility shim — no recreation needed.
 3. **Firewall** — the agent renders the `cs_agent` nft table on start (`nft list table ip cs_agent`).
-   After deploying the updated host-firewall script (which drops the `10000:50000` INPUT range and the
-   old `expose-ports`/`container-inbound` chains), **reboot** for a clean ruleset (or remove the old
-   rules manually). Verify published ports still reach containers and `iptables -S` shows none of the
-   old artifacts.
-   - **Rollback:** reinstall the previous `.deb` **and** `sudo iptables-restore < /root/iptables.pre-upgrade`;
-     re-bind Consul to `:8500`. Do **not** roll back across a non-additive DB migration.
+   The host firewall itself is applied at boot by `cs-iptables.service` (a oneshot that runs
+   `/usr/local/bin/cs-recover_iptables`); the agent does not manage that file. **Edit that file
+   directly** to delete the lines the agent has now taken over — the `10000:50000` INPUT range and
+   the `expose-ports`/`container-inbound` chain setup — then **reboot**
+   so the oneshot re-applies the trimmed ruleset from a clean slate (or, to avoid a reboot, delete
+   those rules from the live ruleset by hand). Verify published ports still reach containers and
+   `iptables -S` shows none of the old `expose-ports`/`container-inbound`/`10000:50000` artifacts.
+   - **Rollback** — v2.0.0 is the *first* native release, so there is **no previous `.deb`**; the
+     prior version ran as a Docker container, so rolling back means undoing the deployment-model
+     change, not just downgrading a package:
+       1. `sudo apt-get purge cs-agent` (removes the native binary + the `/lib/systemd/system` unit).
+       2. Restore the old containerized `cs-agent.service` (the `docker run` unit) and pull the agent
+          image — i.e. re-apply the previous provisioner config.
+       3. Restore the host firewall: `sudo iptables-restore < /root/iptables.pre-upgrade`, **and**
+          revert `/usr/local/bin/cs-recover_iptables` to the version that re-creates the
+          `expose-ports`/`container-inbound` chains + the `10000:50000` range — the old containerized
+          agent *appends* to those chains and silently loses published ports without them.
+       4. Re-bind Consul's HTTP listener to `:8500` (the old agent and customer containers reach
+          metadata via Consul there).
+     From v2.0.1 onward rollback is a normal `apt-get install --allow-downgrades cs-agent=<prev>`;
+     never roll back across a non-additive DB migration.
 
 The controller/provisioner changes (`CS_NODE_ID` injection, the Consul port move, the host-firewall
 trim, the apt source) ship alongside — coordinate per the rollout runbook.
