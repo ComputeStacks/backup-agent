@@ -9,16 +9,16 @@ import (
 )
 
 // projectMigrations is the ordered migration list for every per-project DB
-// (projects/<project_id>.db). See brainstorm §D.2. ADDITIVE-BY-DEFAULT: append
+// (projects/<project_id>.db). ADDITIVE-BY-DEFAULT: append
 // new migrations only. Each per-project DB runs these on first open (the LRU
 // pool migrates on open), so the same rollback-tolerance rules as control.db
-// apply (§9) — an older binary meeting a newer per-project schema refuses via
+// apply — an older binary meeting a newer per-project schema refuses via
 // the schema-version guard rather than corrupting a customer's metadata DB.
 var projectMigrations = []migration{
 	{
 		version: 1,
 		up: func(tx *sql.Tx) error {
-			// Two distinct KV tables, not one — defense in depth (§D.2):
+			// Two distinct KV tables, not one — defense in depth:
 			//   managed_kv  : PLATFORM writes (published env details), customer
 			//                 reads only. Reconstructable.
 			//   customer_kv : CUSTOMER writes & reads (the /db/ space).
@@ -106,7 +106,7 @@ func (s *Store) CustomerGet(ctx context.Context, projectID, path string) (e KVEn
 
 // CustomerPut writes value to the customer-writable area, recording size +
 // content_type + updated_at. Full-value replace (upsert). There is no size cap —
-// killing the Consul 512 KB ceiling is a goal (§4).
+// killing the Consul 512 KB ceiling is a goal.
 func (s *Store) CustomerPut(ctx context.Context, projectID, path, contentType string, value []byte) error {
 	return s.kvPut(ctx, projectID, customerKV, path, contentType, value)
 }

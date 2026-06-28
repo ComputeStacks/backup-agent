@@ -10,7 +10,7 @@ import (
 // migration is one ordered, forward schema change. version must be strictly
 // increasing across the slice; up runs inside its own transaction.
 //
-// Migration convention — ADDITIVE BY DEFAULT (see brainstorm §D.1/§9):
+// Migration convention — ADDITIVE BY DEFAULT:
 // because binaries are rollback-installable from the apt repo, an OLDER binary
 // can be asked to open a DB a NEWER binary migrated. To keep that safe, every
 // migration should only ADD nullable columns / new tables / new indexes that

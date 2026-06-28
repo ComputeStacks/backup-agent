@@ -106,13 +106,13 @@ sudo apt-mark hold cs-agent                   # pin so `upgrade` won't move it b
 
 > **Rollback safety:** the binary rolls back trivially, but the agent runs SQLite
 > migrations on boot. Rollback is only safe because migrations are
-> **additive-by-default + schema-version-guarded** (kv-store §D.1/§D.2). Don't
+> **additive-by-default + schema-version-guarded**. Don't
 > roll back across a non-additive migration without the matching down-migration.
 
 ## Status / caveats
 
 - The systemd unit ships with `Type=simple`. `Type=notify` + `WatchdogSec` are
-  commented out until the agent implements `sd_notify` (runtime doc §3).
+  commented out until the agent implements `sd_notify`.
 - `apt-publish` + the S3 interaction (path-style, public-read, checksums) need a
   **test pass against the real S3 endpoint** before first production use.
 - Validate the `.deb` `Depends:` package names (`borgbackup`, `iptables`,

@@ -436,7 +436,7 @@ func TestAdmin_CrossTenantDBRead(t *testing.T) {
 	mustStatus(t, e.do("GET", "/v1/db/users", "tok-a", nil), http.StatusNotFound)
 }
 
-// --- Shim (D1) ----------------------------------------------------------------
+// --- Shim ----------------------------------------------------------------------
 
 func TestShim_ReturnsManagedMetadata(t *testing.T) {
 	e := newTestEnv(t)

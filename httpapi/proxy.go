@@ -1,8 +1,8 @@
 package httpapi
 
-// Proxy-to-Consul leg (D4) — SCAFFOLD, DEFAULT OFF. BLOCKER: do not enable.
+// Proxy-to-Consul leg — SCAFFOLD, DEFAULT OFF. BLOCKER: do not enable.
 //
-// The cutover design (decisions doc §3 D4) eventually has the agent be the
+// The cutover design eventually has the agent be the
 // single front door on :8500 and proxy reads for not-yet-migrated projects
 // through to the relocated Consul HTTP port via cnslclient. That dual-run leg is
 // NOT wired here on purpose:
@@ -16,12 +16,12 @@ package httpapi
 //     (migrate a project → UpsertTenant → it is served). Everything else is a
 //     miss, full stop, until this leg is implemented.
 //
-// The open blocker is wire-auth (decisions doc §7, "Still open"): how an
+// The open blocker is wire-auth (still open): how an
 // incoming `Authorization: Bearer <token>` maps onto Consul's `X-Consul-Token`
 // at the relocated HTTP port. Forwarding cross-tenant reads before that is
 // resolved would be a tenant-isolation hole, so the forward stays unbuilt.
 //
-// TODO(0a proxy wire-auth): once Bearer→X-Consul-Token is decided, implement the
+// TODO(proxy wire-auth): once Bearer→X-Consul-Token is decided, implement the
 // forward here (use cnslclient.Client() against the relocated Consul HTTP port),
 // call it from authenticate()/the GET handlers ONLY when proxyEnabled() is true,
 // and add the dual-run isolation tests. Until then this function is a no-op stub

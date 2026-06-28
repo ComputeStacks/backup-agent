@@ -1,8 +1,8 @@
 // Package store is the agent's embedded SQLite data plane: one control.db per
 // node (tenant/auth map) plus one DB per project (customer + platform metadata
-// KV). It replaces the node's use of Consul as a KV store (see the kv-store
-// re-architecture brainstorm). It is self-contained — the HTTP layer consumes
-// this API; this package wires no server and nothing into main.go.
+// KV). It replaces the node's use of Consul as a KV store. It is self-contained
+// — the HTTP layer consumes this API; this package wires no server and nothing
+// into main.go.
 //
 // Layout under dataDir:
 //

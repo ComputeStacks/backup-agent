@@ -105,8 +105,7 @@ func applyPlan(c nftConn, plan *renderPlan) error {
 	// gateway_mode_ipv4=nat-unprotected, so Docker's own per-bridge blanket
 	// accept already permits the forwarded ingress (terminating, ahead of where
 	// the old container-inbound sat); a base-chain accept here would be
-	// redundant and wouldn't terminate FORWARD anyway. See
-	// workspace/2026-06-28-0b-forward-accept-decision.md.
+	// redundant and wouldn't terminate FORWARD anyway.
 	for _, ch := range []*nftables.Chain{prerouting, output} {
 		c.AddRule(dnatRule(table, ch, unix.IPPROTO_TCP, pubTCP, dnatTCP))
 		c.AddRule(dnatRule(table, ch, unix.IPPROTO_UDP, pubUDP, dnatUDP))

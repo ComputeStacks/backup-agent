@@ -9,7 +9,7 @@ import (
 )
 
 // controlMigrations is the ordered migration list for control.db (one per node).
-// See brainstorm §D.1. ADDITIVE-BY-DEFAULT: append new migrations, never edit a
+// ADDITIVE-BY-DEFAULT: append new migrations, never edit a
 // shipped one (an already-applied version is skipped, so edits to it never run).
 var controlMigrations = []migration{
 	{
@@ -39,7 +39,7 @@ var controlMigrations = []migration{
 var ErrTenantExists = errors.New("store: token_hash already mapped to a different project")
 
 // Tenant is the local token→project mapping the customer endpoint authenticates
-// against (offline-capable; see brainstorm §A).
+// against (offline-capable).
 type Tenant struct {
 	ProjectID string
 	TokenHash string

@@ -10,17 +10,15 @@ import (
 // This replaces the old iptables string-diff reconcile of the `expose-ports`
 // DNAT chain. The agent now owns a single `cs_agent` ip table, rendered
 // atomically from the same desired state (Consul `nodes/<host>/ingress_rules`
-// -> NatRules) on every reconcile. See the kv-store re-architecture design,
-// §D.5.
+// -> NatRules) on every reconcile.
 //
 // cs_agent renders DNAT only -- no forward/filter chain. The old
 // `container-inbound` forward-accept has always been redundant: project bridges
 // run gateway_mode_ipv4=nat-unprotected, so Docker emits a per-bridge blanket
-// accept that fires (terminating) ahead of where container-inbound sat. See
-// workspace/2026-06-28-0b-forward-accept-decision.md. Cross-project isolation
-// stays in DOCKER-USER (isolation.go, unchanged).
+// accept that fires (terminating) ahead of where container-inbound sat.
+// Cross-project isolation stays in DOCKER-USER (isolation.go, unchanged).
 //
-// Table shape (per §D.5, DNAT-only):
+// Table shape (DNAT-only):
 //
 //	table ip cs_agent {
 //	  set published_tcp { type inet_service }            # live nat ports (tcp)
@@ -83,8 +81,7 @@ type renderPlan struct {
 // rendered with empty sets/maps -> all published ports closed, which is the
 // intended fail-closed default).
 //
-// cs_agent renders DNAT only (no forward/filter chain -- see
-// workspace/2026-06-28-0b-forward-accept-decision.md), so the Driver field is a
+// cs_agent renders DNAT only (no forward/filter chain), so the Driver field is a
 // no-op here: the DNAT/published entry is built for every rule regardless of
 // Driver, matching the old nat_rule.go (which had no Driver guard). The old
 // forward-accept's calico-node skip no longer applies because there is no

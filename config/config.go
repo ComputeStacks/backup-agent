@@ -46,7 +46,7 @@ func ConfigureApp() {
 	// live under this directory.
 	viper.SetDefault("store.data_dir", "/var/lib/cs-agent")
 
-	// Customer-metadata HTTP front door (httpapi/), Phase 0a. Binds the node's
+	// Customer-metadata HTTP front door (httpapi/). Binds the node's
 	// own :8500 (baked into customer containers via metadata.internal:8500, so
 	// the port must stay 8500); the provisioner sets listen_addr to
 	// primary_ip:8500. admin_token_hash is the hex sha256 of the per-node admin

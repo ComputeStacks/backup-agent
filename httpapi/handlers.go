@@ -69,13 +69,13 @@ func (s *Server) handleCustomerManagedGet(w http.ResponseWriter, r *http.Request
 	writeValue(w, e)
 }
 
-// handleShimMetadata is the single legacy compatibility path (D1): the old
+// handleShimMetadata is the single legacy compatibility path: the old
 // monarx entrypoint does GET …/v1/kv/projects/{token}/metadata?raw=true.
 //
 // Authoritative identity is the Bearer (requireCustomer already scoped us to one
 // project). The {token} path segment is IGNORED for authorization — a token can
 // only ever read its OWN managed metadata regardless of what {token} says. We
-// serve managed_kv["metadata"] (the controller-pushed minimal blob, D5) as raw
+// serve managed_kv["metadata"] (the controller-pushed minimal blob) as raw
 // JSON. Only ?raw=true is handled (monarx always sends it); anything else is a
 // 400 (we never emit Consul's base64-wrapped envelope).
 func (s *Server) handleShimMetadata(w http.ResponseWriter, r *http.Request, sc scope) {
@@ -109,13 +109,13 @@ func (s *Server) handleShimMetadata(w http.ResponseWriter, r *http.Request, sc s
 // NOTE: the admin DATA routes (managed/* and db/*) assume the project was
 // provisioned via PUT /v1/admin/tenants/{project_id}. They do not gate on the
 // tenant row existing: a write to a never-provisioned (but path-valid) id will
-// lazily create a stray <project_id>.db. That is intentional for 0a and not a
-// security concern — admin is a trusted, per-node scope and the project_id is
-// validated by the store (ErrInvalidProjectID → 400 before any file is touched
-// for an unsafe id). No gating logic is added here in 0a.
+// lazily create a stray <project_id>.db. That is intentional at this stage and
+// not a security concern — admin is a trusted, per-node scope and the project_id
+// is validated by the store (ErrInvalidProjectID → 400 before any file is
+// touched for an unsafe id). No gating logic is added here yet.
 
 // handleAdminManagedPut writes managed_kv[path] for the path's project. This is
-// the controller pushing the minimal managed blob (e.g. path "metadata", D5).
+// the controller pushing the minimal managed blob (e.g. path "metadata").
 func (s *Server) handleAdminManagedPut(w http.ResponseWriter, r *http.Request, _ scope) {
 	projectID := r.PathValue("project_id")
 	path := r.PathValue("path")

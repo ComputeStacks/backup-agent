@@ -1,14 +1,13 @@
 // Package httpapi is the agent's customer-metadata HTTP front door. It replaces
-// the node's use of Consul as the metadata KV endpoint (see the Phase 0a cutover
-// decisions, D1–D7). It serves three audiences over one listener bound at
-// node.primary_ip:8500:
+// the node's use of Consul as the metadata KV endpoint. It serves three
+// audiences over one listener bound at node.primary_ip:8500:
 //
 //   - Customer containers (tenant Bearer → sha256 → store.TenantByTokenHash):
 //     read/write their own /v1/db space and read the platform-managed
 //     /v1/managed space. The project is ALWAYS derived from the token, never
 //     from the request path — a customer token can only ever touch its own
 //     project's data.
-//   - The legacy monarx shim (D1): GET /v1/kv/projects/{token}/metadata?raw=true,
+//   - The legacy monarx shim: GET /v1/kv/projects/{token}/metadata?raw=true,
 //     authenticated by the Bearer (NOT the {token} path segment).
 //   - The controller (admin Bearer → sha256 constant-time-equals the configured
 //     admin hash): privileged cross-tenant writes to managed_kv and reads/writes
@@ -81,10 +80,10 @@ type Config struct {
 	MaxBodyBytes int64
 
 	// ProxyToConsul gates the dual-run proxy-to-Consul leg for un-migrated
-	// projects (D4). DEFAULT FALSE and intentionally inert: the proxy must not
+	// projects. DEFAULT FALSE and intentionally inert: the proxy must not
 	// serve cross-tenant reads until its Bearer→X-Consul-Token wire-auth is
-	// resolved (open item in the decisions doc §7). While false, an unknown
-	// tenant is a 401 and an unknown path a 404 — never a forward to Consul.
+	// resolved. While false, an unknown tenant is a 401 and an unknown path a
+	// 404 — never a forward to Consul.
 	ProxyToConsul bool
 }
 
@@ -183,7 +182,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /v1/db/{path...}", s.requireCustomer(s.handleCustomerDBDelete))
 	s.mux.HandleFunc("GET /v1/managed/{path...}", s.requireCustomer(s.handleCustomerManagedGet))
 
-	// --- Legacy monarx shim (D1); identity is the Bearer, not {token} ---
+	// --- Legacy monarx shim; identity is the Bearer, not {token} ---
 	s.mux.HandleFunc("GET /v1/kv/projects/{token}/metadata", s.requireCustomer(s.handleShimMetadata))
 
 	// --- Admin (per-node admin Bearer; project_id explicit in the path) ---
@@ -236,12 +235,12 @@ func (s *Server) authenticate(ctx context.Context, r *http.Request) (scope, *aut
 		return scope{}, &authError{status: http.StatusInternalServerError, msg: "auth backend error"}
 	}
 	if !found {
-		// Unknown tenant. The dual-run proxy-to-Consul leg (D4) is the only thing
+		// Unknown tenant. The dual-run proxy-to-Consul leg is the only thing
 		// that could serve this, and it is a deliberate BLOCKER: gated off by
 		// default until its Bearer→X-Consul-Token wire-auth is resolved (see
 		// proxy.go). While disabled this is terminal — we never forward to Consul.
 		if s.proxyEnabled() {
-			// TODO(0a proxy wire-auth): forward un-migrated reads to Consul here.
+			// TODO(proxy wire-auth): forward un-migrated reads to Consul here.
 			s.log.Warn("proxy_to_consul is enabled but the proxy leg is not implemented; treating unknown tenant as unauthorized")
 		}
 		return scope{}, &authError{status: http.StatusUnauthorized, msg: "unknown token"}

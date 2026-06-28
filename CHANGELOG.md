@@ -2,7 +2,7 @@
 
 ## v2.0.0-rc1
 
-Major release — the agent becomes the node's **data plane** (Phase 0 of the Consul-retirement /
+Major release — the agent becomes the node's **data plane** (part of the Consul-retirement /
 node-autonomy re-architecture). Three independent changes ship together; production rolls out staged
 (native deploy first, then the firewall and metadata cutovers, validated on a canary).
 

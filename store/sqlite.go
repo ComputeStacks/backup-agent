@@ -19,7 +19,7 @@ const busyTimeout = 5 * time.Second
 // PRAGMAs every cs-agent DB shares (control.db and every per-project DB):
 //
 //   - journal_mode=WAL      one writer + concurrent non-blocking readers
-//   - synchronous=FULL      a returned COMMIT is on disk (authoritative data; see §B)
+//   - synchronous=FULL      a returned COMMIT is on disk (authoritative data)
 //   - busy_timeout=…        wait out a transient lock instead of erroring
 //   - foreign_keys=ON       enforce the FK constraints declared in the schema
 //
