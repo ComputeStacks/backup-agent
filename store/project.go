@@ -168,7 +168,7 @@ func (s *Store) kvPut(ctx context.Context, projectID string, area kvArea, path, 
 		return err
 	}
 	if path == "" {
-		return errors.New("store: kv put requires a non-empty path")
+		return fmt.Errorf("%w: kv put requires a non-empty path", ErrInvalidPath)
 	}
 	db, release, err := s.pool.acquire(projectID)
 	if err != nil {

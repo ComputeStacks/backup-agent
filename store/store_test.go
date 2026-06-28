@@ -371,9 +371,34 @@ func TestCreateAndDeleteProjectDB_Files(t *testing.T) {
 func TestInvalidProjectID(t *testing.T) {
 	s := open(t, Options{})
 	for _, bad := range []string{"", ".", "..", "../escape", "a/b", `a\b`, "x..y", ".hidden", "-flag"} {
-		if err := s.CreateProjectDB(ctx, bad); err == nil {
+		err := s.CreateProjectDB(ctx, bad)
+		if err == nil {
 			t.Fatalf("expected error for project id %q", bad)
 		}
+		// The error must be the exported sentinel so the HTTP layer can map it
+		// to a 400 (client error) rather than a 500.
+		if !errors.Is(err, ErrInvalidProjectID) {
+			t.Fatalf("project id %q: err = %v, want ErrInvalidProjectID", bad, err)
+		}
+	}
+	// The same sentinel must surface from the KV data path too (it validates the
+	// id before touching any file).
+	if err := s.CustomerPut(ctx, "../escape", "k", "", []byte("v")); !errors.Is(err, ErrInvalidProjectID) {
+		t.Fatalf("CustomerPut bad id: err = %v, want ErrInvalidProjectID", err)
+	}
+}
+
+func TestInvalidPath(t *testing.T) {
+	s := open(t, Options{})
+	if err := s.CreateProjectDB(ctx, "proj"); err != nil {
+		t.Fatalf("CreateProjectDB: %v", err)
+	}
+	// An empty path on a put is a client error → the exported sentinel.
+	if err := s.CustomerPut(ctx, "proj", "", "", []byte("v")); !errors.Is(err, ErrInvalidPath) {
+		t.Fatalf("CustomerPut empty path: err = %v, want ErrInvalidPath", err)
+	}
+	if err := s.ManagedPut(ctx, "proj", "", "", []byte("v")); !errors.Is(err, ErrInvalidPath) {
+		t.Fatalf("ManagedPut empty path: err = %v, want ErrInvalidPath", err)
 	}
 }
 

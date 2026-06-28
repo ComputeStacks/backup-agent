@@ -161,6 +161,12 @@ func jobEvent() hclog.Logger {
 	return log.New().Named("worker")
 }
 
+// captureExit cancels the worker context on SIGINT/SIGTERM so the worker pools
+// drain their in-flight job and return (each calls wg.Done). It deliberately
+// does NOT call os.Exit: process teardown is owned by main, which on the same
+// signal drains the metadata HTTP server and closes the store in order. Calling
+// os.Exit here would bypass main's deferred store Close and abort an in-flight
+// HTTP drain mid-flight (it ran the defers-skipping os.Exit race this replaces).
 func captureExit(cancel context.CancelFunc) {
 	c := make(chan os.Signal, 2)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
@@ -168,7 +174,6 @@ func captureExit(cancel context.CancelFunc) {
 		<-c
 		fmt.Println("\r- Stopping workers...")
 		cancel()
-		os.Exit(0)
 	}()
 }
 

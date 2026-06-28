@@ -113,7 +113,7 @@ func (s *Store) Close() error {
 // leading "." or "-" (hidden files; ids an arg parser would read as a flag).
 func validateProjectID(projectID string) error {
 	if projectID == "" {
-		return errors.New("store: empty project_id")
+		return fmt.Errorf("%w: empty", ErrInvalidProjectID)
 	}
 	if projectID != filepath.Base(projectID) ||
 		strings.ContainsAny(projectID, `/\`) ||
@@ -122,7 +122,7 @@ func validateProjectID(projectID string) error {
 		projectID == "." ||
 		strings.HasPrefix(projectID, ".") ||
 		strings.HasPrefix(projectID, "-") {
-		return fmt.Errorf("store: invalid project_id %q", projectID)
+		return fmt.Errorf("%w %q", ErrInvalidProjectID, projectID)
 	}
 	return nil
 }
