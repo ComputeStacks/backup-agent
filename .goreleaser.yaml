@@ -46,9 +46,11 @@ nfpms:
     # cs-agent_2.0.0-rc1_linux_amd64.deb (cosmetic, but non-conventional).
     file_name_template: "{{ .ConventionalFileName }}"
     # Replaces the Dockerfile's `apt-get install iptables ca-certificates ...`.
-    # NOTE: validate package names on Debian 12/13 (borgbackup, iptables present).
+    # borg is deliberately NOT a dependency: the agent runs borg inside the
+    # cs-docker-borg container (backups.borg.image), never as a host binary, so
+    # the host distro's borg version is irrelevant to the agent.
+    # NOTE: validate package names on Debian 12/13 (iptables present).
     dependencies:
-      - borgbackup
       - iptables
       - ca-certificates
     contents:
