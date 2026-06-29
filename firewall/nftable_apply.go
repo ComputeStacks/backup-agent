@@ -19,8 +19,9 @@ import (
 //
 // dnatValueType is the map value type "ipv4_addr . inet_service": a 4-byte IPv4
 // address concatenated with a 2-byte port. Concatenated types are padded to the
-// 4-byte register width, so each value occupies 8 bytes (addr in reg N, port in
-// reg N+1) -- exactly the register layout the NAT expression below references.
+// 4-byte register width, so the value occupies 8 bytes across two adjacent 4-byte
+// register slots: the addr in the first (reg 1 == NFT_REG32_00) and the port in the
+// next (reg 9 == NFT_REG32_01) -- the exact registers the NAT expression references.
 var dnatValueType = nftables.MustConcatSetType(nftables.TypeIPAddr, nftables.TypeInetService)
 
 // nftConn is the subset of *nftables.Conn the apply path uses. Defined as an
@@ -181,8 +182,8 @@ func dnatElements(entries []dnatEntry) ([]nftables.SetElement, error) {
 //	payload TH+2 len 2 -> reg1   (the dport)
 //	lookup reg1 in @published_<proto>             (is it a live published port?)
 //	payload TH+2 len 2 -> reg1   (re-load dport as the map key)
-//	lookup reg1 in @dnat_<proto> -> reg1          (map -> ipv4(reg1) . port(reg2))
-//	nat dnat addr=reg1 proto=reg2
+//	lookup reg1 in @dnat_<proto> -> reg1          (map writes ipv4 -> reg1, port -> reg9)
+//	nat dnat addr=reg1 proto=reg9
 func dnatRule(table *nftables.Table, chain *nftables.Chain, proto byte, published, dnat *nftables.Set) *nftables.Rule {
 	return &nftables.Rule{
 		Table: table,
@@ -196,7 +197,13 @@ func dnatRule(table *nftables.Table, chain *nftables.Chain, proto byte, publishe
 			// dport -> reg1 again as the map key; map writes ipv4(reg1) . port(reg2)
 			&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseTransportHeader, Offset: 2, Len: 2},
 			&expr.Lookup{SourceRegister: 1, DestRegister: 1, IsDestRegSet: true, SetName: dnat.Name, SetID: dnat.ID},
-			&expr.NAT{Type: expr.NATTypeDestNAT, Family: unix.NFPROTO_IPV4, RegAddrMin: 1, RegProtoMin: 2},
+			// proto_min is reg 9, NOT 2: the map lookup wrote its 8-byte concat value
+			// into the 16-byte register reg 1, which the kernel reads as two 4-byte
+			// slots -- the ipv4 addr in reg 1 (NFT_REG32_00) and the port in reg 9
+			// (NFT_REG32_01, the next slot). Legacy "reg 2" is a different register
+			// (byte offset 16) that nothing wrote, so the verifier rejects the rule
+			// and Flush returns ENODATA. Matches nft: `nat dnat ip addr_min reg 1 proto_min reg 9`.
+			&expr.NAT{Type: expr.NATTypeDestNAT, Family: unix.NFPROTO_IPV4, RegAddrMin: 1, RegProtoMin: 9},
 		},
 	}
 }
