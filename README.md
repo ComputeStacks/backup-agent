@@ -97,7 +97,7 @@ notes](packaging/README.md#rollback) and the [`CHANGELOG.md`](CHANGELOG.md) upgr
 The Docker image is kept for local development only:
 
 ```bash
-make build-container      # build ghcr.io/computestacks/backup-agent:latest
+make build-container      # build ghcr.io/computestacks/node-agent:latest
 ```
 
 Build and run the native binary directly (it reads `./agent.yml` or
