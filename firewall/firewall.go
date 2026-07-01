@@ -9,51 +9,28 @@ import (
 
 func Perform(consul *consulAPI.Client) {
 	defer sentry.Recover()
-	// Enforce cross-project network isolation. This lives in DOCKER-USER and is
-	// independent of the per-port reconcile below (which only manages the
-	// expose-ports / container-inbound chains), so the two never interfere.
+	// Enforce cross-project network isolation. This stays iptables-based in
+	// DOCKER-USER (its correctness depends on ordering relative to Docker's own
+	// chains) and is independent of the published-port reconcile below (which
+	// owns the native cs_agent table), so the two never interfere.
 	ensureProjectIsolation()
 	// Gather rules from ComputeStacks
 	expectedRules, err := loadExpectedRules(consul)
 	if err != nil {
+		// On a load error we leave the kernel state untouched (do not render an
+		// empty table) -- a transient Consul error must not tear down live
+		// published ports. The next reconcile re-renders from desired state.
 		return
 	}
 	// loadExpectedRules returns a nil *NatRules when this node has no ingress
-	// rules in consul (or the payload failed to parse). There is nothing to
-	// reconcile in that case, so skip rather than dereference nil below.
-	if expectedRules == nil {
+	// rules in consul. That is a legitimate desired state (no published ports),
+	// so render an empty cs_agent table to converge -- closing any ports that
+	// were previously open. buildPlan handles a nil ruleset (-> empty table).
+	if err := renderTable(expectedRules); err != nil {
+		sentry.CaptureException(err)
+		csFirewallLog().Error("Failed to render cs_agent nftables table", "error", err.Error())
 		return
 	}
-	// Gather current rules
-	currentRules := hostIPTableRules()
-	currentForwardRules := hostForwardIPTableRules()
-
-	// Loop through current rules
-	// 	* Check if rule exists in expected rules
-	//		* Delete if rule is missing from expected rules
-	for _, l := range currentRules {
-		if !expectedRules.ruleExists(l) {
-			deleteHostRule(l)
-		}
-	}
-	for _, l := range currentForwardRules {
-		if !expectedRules.forwardRuleExists(l) {
-			deleteForwardHostRule(l)
-		}
-	}
-
-	// Loop through expected rules
-	//	* Check if rule exists
-	//		* Add it if missing
-	for _, r := range expectedRules.Rules {
-		if !r.hostRuleExists(currentRules) {
-			r.apply()
-		}
-		if !r.forwardHostRuleExists(currentForwardRules) {
-			r.applyForwardRule()
-		}
-	}
-
 }
 
 // Logger

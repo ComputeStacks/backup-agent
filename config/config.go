@@ -42,6 +42,24 @@ func ConfigureApp() {
 	viper.SetDefault("consul.token", "")
 	viper.SetDefault("consul.tls", false)
 
+	// Embedded SQLite data plane (store/): control.db + per-project metadata DBs
+	// live under this directory.
+	viper.SetDefault("store.data_dir", "/var/lib/cs-agent")
+
+	// Customer-metadata HTTP front door (httpapi/). Binds the node's
+	// own :8500 (baked into customer containers via metadata.internal:8500, so
+	// the port must stay 8500); the provisioner sets listen_addr to
+	// primary_ip:8500. admin_token_hash is the hex sha256 of the per-node admin
+	// Bearer the controller authenticates with (empty disables the admin scope).
+	// max_body_bytes caps a single request body (413 on exceed) — the STORED
+	// value is uncapped; this is only a transport limit. proxy_to_consul gates
+	// the dual-run proxy-to-Consul leg and DEFAULTS FALSE (blocker: not wired
+	// until Bearer→X-Consul-Token wire-auth is resolved).
+	viper.SetDefault("metadata.listen_addr", ":8500")
+	viper.SetDefault("metadata.admin_token_hash", "")
+	viper.SetDefault("metadata.max_body_bytes", 10485760) // 10 MiB
+	viper.SetDefault("metadata.proxy_to_consul", false)
+
 	viper.SetDefault("backups.enabled", true)
 	viper.SetDefault("backups.check_freq", "* * * * *")
 	viper.SetDefault("backups.prune_freq", "15 1 * * *")

@@ -25,9 +25,9 @@ import (
 //
 // PLACEHOLDER: exportEventCode is the operation code ComputeStacks must
 // pre-create the EventLog with (it matches the agent's status callback by
-// audit_id + this code). The ComputeStacks side MUST use the same value — see
-// the handoff doc in the computestacks repo. exportDetailFailed labels the
-// failure-detail PATCH and is agent-internal.
+// audit_id + this code). The ComputeStacks side MUST be configured with the
+// same value. exportDetailFailed labels the failure-detail PATCH and is
+// agent-internal.
 const (
 	exportEventCode    = "agent-e7c1a9d4b6f20835"
 	exportDetailFailed = "agent-3f8b2c1e7a9d4056"

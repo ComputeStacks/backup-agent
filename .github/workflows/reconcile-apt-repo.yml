@@ -1,0 +1,59 @@
+name: Reconcile apt repo
+
+# Rebuilds the SHARED apt index from the full pool and re-signs it — without
+# building or releasing anything. Guarantees the index always matches the pool
+# (self-heals a partial/failed release publish), and is the seed of the single
+# index-builder for when a 2nd package ships (see packaging/README.md).
+on:
+  schedule:
+    - cron: "17 6 * * *"   # daily; pick a quiet hour
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# Same group as release.yml so a reconcile never races a release on the shared index.
+concurrency:
+  group: apt-publish
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    environment: release
+    env:
+      APT_S3_ENDPOINT: ${{ vars.APT_S3_ENDPOINT }}
+      APT_S3_REGION: ${{ vars.APT_S3_REGION }}
+      APT_S3_BUCKET: ${{ vars.APT_S3_BUCKET }}
+      APT_S3_PREFIX: ${{ vars.APT_S3_PREFIX }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.APT_S3_ACCESS_KEY }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.APT_S3_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Install apt-ftparchive
+        run: sudo apt-get update && sudo apt-get install -y apt-utils
+
+      - name: Import GPG signing key
+        id: gpg
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Pull full pool from S3
+        run: |
+          mkdir -p aptrepo
+          go run ./cmd/apt-publish pull aptrepo
+
+      - name: Rebuild + sign index from the full pool
+        env:
+          APT_GPG_KEY_ID: ${{ steps.gpg.outputs.fingerprint }}
+        run: ./scripts/build-apt-repo.sh aptrepo
+
+      - name: Publish (Release files last)
+        run: go run ./cmd/apt-publish push aptrepo
