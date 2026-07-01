@@ -1,6 +1,6 @@
 # Changelog
 
-## v2.0.0-rc1
+## v2.0.0
 
 Major release — the agent becomes the node's **data plane** (part of the Consul-retirement /
 node-autonomy re-architecture). Three independent changes ship together; production rolls out staged
