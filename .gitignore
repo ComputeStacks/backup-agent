@@ -1,7 +1,6 @@
 .idea
 .DS_Store
 agent.yaml
-pkg/
 testdata
 *.log
 .vagrant
