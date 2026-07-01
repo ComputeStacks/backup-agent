@@ -35,7 +35,7 @@ nfpms:
   - id: cs-agent
     package_name: cs-agent
     vendor: ComputeStacks
-    homepage: https://github.com/computestacks/backup-agent
+    homepage: https://github.com/computestacks/node-agent
     maintainer: ComputeStacks <support@computestacks.com>
     description: ComputeStacks node agent (cs-agent).
     license: proprietary
@@ -73,6 +73,6 @@ changelog:
 release:
   github:
     owner: computestacks
-    name: backup-agent
+    name: node-agent
   draft: false
   prerelease: auto

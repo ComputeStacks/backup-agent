@@ -1,6 +1,6 @@
 [Unit]
 Description=ComputeStacks Node Agent (cs-agent)
-Documentation=https://github.com/computestacks/backup-agent
+Documentation=https://github.com/computestacks/node-agent
 Requires=docker.service
 After=docker.service
 # Consul is still required until coordination leaves it; drop both lines then.

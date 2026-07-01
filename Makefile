@@ -6,4 +6,4 @@ help: ## Help
 .DEFAULT_GOAL := help
 
 build-container: ## Build container
-	docker build -t ghcr.io/computestacks/backup-agent:latest .
+	docker build -t ghcr.io/computestacks/node-agent:latest .
