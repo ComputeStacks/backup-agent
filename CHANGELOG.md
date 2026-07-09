@@ -1,5 +1,23 @@
 # Changelog
 
+## v2.1.0
+
+Adds a generic **container-action channel** and the append-only **changelog** primitive the controller
+consumes — the first step of inverting task/coordination state onto the agent (continuing the
+Consul-retirement / node-autonomy re-architecture).
+
+- [FEATURE] **Container-initiated actions.** A container can `POST /v1/actions` (tenant Bearer) to request
+  a named action on its environment (`{action_type, params}`). The agent stamps the project from the token
+  — never the request body — and records the request to a durable outbox. It is deliberately **generic**:
+  it does not interpret `action_type` (the controller dispatches it), so new actions need no agent change.
+  Fire-and-forget (`202 Accepted`), guarded by a per-tenant rate limit and a request-size cap. First use
+  case: CDN cache purge.
+- [FEATURE] **Node changelog + controller pull API.** A new append-only `changelog` (global monotonic
+  `seq`) in the embedded SQLite control DB records node-owned state changes as full snapshots; the
+  controller pulls incrementally via `GET /v1/admin/changelog?since=&limit=&entity_type=` (per-node admin
+  Bearer). This is the replication spine for moving the remaining Consul-backed coordination state onto the
+  agent. Migrations stay rollback-tolerant (additive + schema-version guard).
+
 ## v2.0.0
 
 Major release — the agent becomes the node's **data plane** (part of the Consul-retirement /
