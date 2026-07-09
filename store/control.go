@@ -31,6 +31,40 @@ var controlMigrations = []migration{
 			return err
 		},
 	},
+	{
+		version: 2,
+		up: func(tx *sql.Tx) error {
+			// changelog: node-scoped, append-only replication spine with a global
+			// monotonic seq (AUTOINCREMENT → never reused, even across pruning) —
+			// a controller polls "seq > cursor" to project node-owned state.
+			// action_requests: the container-action outbox; its insert appends a
+			// changelog row in the SAME transaction, so both live in control.db
+			// (one single-file tx — SQLite has no cross-file atomicity).
+			_, err := tx.Exec(`
+				CREATE TABLE changelog (
+					seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+					entity_type TEXT    NOT NULL,
+					entity_id   TEXT    NOT NULL,
+					project_id  TEXT,
+					op          TEXT    NOT NULL,
+					payload     TEXT,
+					created_at  INTEGER NOT NULL
+				);
+				CREATE INDEX idx_changelog_type_seq ON changelog(entity_type, seq);
+
+				CREATE TABLE action_requests (
+					id          TEXT    PRIMARY KEY,
+					project_id  TEXT    NOT NULL,
+					action_type TEXT    NOT NULL,
+					params      TEXT,
+					status      TEXT    NOT NULL DEFAULT 'pending',
+					created_at  INTEGER NOT NULL,
+					updated_at  INTEGER NOT NULL
+				);
+			`)
+			return err
+		},
+	},
 }
 
 // ErrTenantExists is returned when UpsertTenant would collide on token_hash with
