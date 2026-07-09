@@ -5,8 +5,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 
 	"cs-agent/store"
+
+	"github.com/google/uuid"
 )
 
 // --- Customer routes (project comes from sc.projectID, NEVER the URL) --------
@@ -239,14 +242,140 @@ func (s *Server) handleAdminTenantDelete(w http.ResponseWriter, r *http.Request,
 	w.WriteHeader(http.StatusOK)
 }
 
+// --- Container actions + changelog -------------------------------------------
+
+// actionCreateRequest is the body of POST /v1/actions. project_id is NEVER read
+// from the body — it is stamped from the authenticated tenant scope (there is no
+// project_id field here, so a smuggled one is silently ignored). params is
+// opaque JSON the agent does not interpret.
+type actionCreateRequest struct {
+	ActionType string          `json:"action_type"`
+	Params     json.RawMessage `json:"params"`
+}
+
+// actionCreateResponse is the 202 body: the agent-generated id + initial status.
+type actionCreateResponse struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
+// changelogListResponse is the GET /v1/admin/changelog body.
+type changelogListResponse struct {
+	Entries []store.ChangelogEntry `json:"entries"`
+}
+
+const (
+	maxActionTypeLen   = 128       // action_type sanity bound
+	maxActionBodyBytes = 128 << 10 // tight cap on the whole /v1/actions body
+	maxParamsBytes     = 64 << 10  // cap on the opaque params blob
+
+	defaultChangelogLimit = 100
+	maxChangelogLimit     = 1000
+)
+
+// handleActionCreate records a container's fire-and-forget action request. The
+// agent is generic: it validates only that action_type is present and of sane
+// length and that params is within cap — it never interprets the action (that is
+// the controller's job). The project is stamped from sc.projectID, never the
+// body. The outbox row + its changelog row are written atomically; a controller
+// pulls it later. Rate-limited per tenant. Returns 202 with the new id.
+func (s *Server) handleActionCreate(w http.ResponseWriter, r *http.Request, sc scope) {
+	body, ok := s.readBodyLimited(w, r, maxActionBodyBytes)
+	if !ok {
+		return
+	}
+	var req actionCreateRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.ActionType == "" {
+		writeError(w, http.StatusBadRequest, "action_type is required")
+		return
+	}
+	if len(req.ActionType) > maxActionTypeLen {
+		writeError(w, http.StatusBadRequest, "action_type too long")
+		return
+	}
+	if len(req.Params) > maxParamsBytes {
+		writeError(w, http.StatusBadRequest, "params too large")
+		return
+	}
+	// Normalize "no params": both an omitted params and an explicit JSON null
+	// become SQL NULL. (A bare `null` RawMessage would otherwise store the literal
+	// text "null", differing from the omitted case.)
+	params := req.Params
+	if len(params) == 0 || string(params) == "null" {
+		params = nil
+	}
+	if !s.limiter.allow(sc.projectID) {
+		writeError(w, http.StatusTooManyRequests, "too many action requests; slow down")
+		return
+	}
+	ar, err := s.store.CreateActionRequest(r.Context(), uuid.New().String(), sc.projectID, req.ActionType, params)
+	if err != nil {
+		s.storeError(w, err, "create action request")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, actionCreateResponse{ID: ar.ID, Status: ar.Status})
+}
+
+// handleAdminChangelogList is the controller's pull channel: changelog rows with
+// seq > since, ordered by seq, capped by limit (default 100, max 1000),
+// optionally filtered by entity_type. Reuses the per-node admin Bearer.
+func (s *Server) handleAdminChangelogList(w http.ResponseWriter, r *http.Request, _ scope) {
+	q := r.URL.Query()
+
+	var since int64
+	if raw := q.Get("since"); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n < 0 {
+			writeError(w, http.StatusBadRequest, "invalid since")
+			return
+		}
+		since = n
+	}
+
+	limit := defaultChangelogLimit
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid limit")
+			return
+		}
+		if n > maxChangelogLimit {
+			n = maxChangelogLimit
+		}
+		limit = n
+	}
+
+	entries, err := s.store.ChangelogSince(r.Context(), since, q.Get("entity_type"), limit)
+	if err != nil {
+		s.storeError(w, err, "changelog since")
+		return
+	}
+	if entries == nil {
+		entries = []store.ChangelogEntry{} // encode [] not null
+	}
+	writeJSON(w, http.StatusOK, changelogListResponse{Entries: entries})
+}
+
 // --- helpers -----------------------------------------------------------------
 
-// readBody reads the request body under the configured cap. On a body that
-// exceeds MaxBodyBytes, http.MaxBytesReader surfaces a *http.MaxBytesError; we
-// translate that to 413 and return ok=false (the handler must stop). The stored
-// VALUE has no size cap — only this transport-level body limit applies.
+// readBody reads the request body under the server's configured cap
+// (MaxBodyBytes). See readBodyLimited for the semantics.
 func (s *Server) readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
-	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
+	return s.readBodyLimited(w, r, s.cfg.MaxBodyBytes)
+}
+
+// readBodyLimited reads the request body under an explicit byte cap. On a body
+// that exceeds limit, http.MaxBytesReader surfaces a *http.MaxBytesError; we
+// translate that to 413 and return ok=false (the handler must stop); any other
+// read error is a 400. The stored VALUE has no size cap — only this
+// transport-level body limit applies. /v1/actions passes a tighter cap than the
+// KV routes so a flood can't buffer large bodies into the shared control.db path.
+func (s *Server) readBodyLimited(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		var mbe *http.MaxBytesError
@@ -301,4 +430,13 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// writeJSON writes v as a JSON body with the given status: the success-path
+// analog of writeError. (The KV routes stream raw stored bytes via writeValue;
+// the actions + changelog routes return structured JSON.)
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
 }

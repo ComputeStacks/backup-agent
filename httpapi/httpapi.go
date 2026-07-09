@@ -32,6 +32,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -59,6 +60,9 @@ type Store interface {
 	ManagedGet(ctx context.Context, projectID, path string) (store.KVEntry, bool, error)
 	ManagedPut(ctx context.Context, projectID, path, contentType string, value []byte) error
 	ManagedDelete(ctx context.Context, projectID, path string) error
+
+	CreateActionRequest(ctx context.Context, id, projectID, actionType string, params json.RawMessage) (store.ActionRequest, error)
+	ChangelogSince(ctx context.Context, since int64, entityType string, limit int) ([]store.ChangelogEntry, error)
 }
 
 // Config configures the metadata HTTP server. Populate from viper in main.go.
@@ -120,11 +124,12 @@ func (e *authError) Error() string { return e.msg }
 // Server is the metadata HTTP front door. Build with New, run with Start, stop
 // with Shutdown.
 type Server struct {
-	cfg   Config
-	store Store
-	log   hclog.Logger
-	mux   *http.ServeMux
-	http  *http.Server
+	cfg     Config
+	store   Store
+	log     hclog.Logger
+	mux     *http.ServeMux
+	http    *http.Server
+	limiter *rateLimiter
 }
 
 // New builds the server and wires its routes. It does not bind a socket; call
@@ -137,10 +142,11 @@ func New(cfg Config, st Store, logger hclog.Logger) *Server {
 		logger = hclog.NewNullLogger()
 	}
 	s := &Server{
-		cfg:   cfg,
-		store: st,
-		log:   logger,
-		mux:   http.NewServeMux(),
+		cfg:     cfg,
+		store:   st,
+		log:     logger,
+		mux:     http.NewServeMux(),
+		limiter: newRateLimiter(actionsBurst, actionsRefillPerSec),
 	}
 	s.routes()
 	s.http = &http.Server{
@@ -182,6 +188,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /v1/db/{path...}", s.requireCustomer(s.handleCustomerDBDelete))
 	s.mux.HandleFunc("GET /v1/managed/{path...}", s.requireCustomer(s.handleCustomerManagedGet))
 
+	// --- Container actions (tenant Bearer; project stamped from the token) ---
+	s.mux.HandleFunc("POST /v1/actions", s.requireCustomer(s.handleActionCreate))
+
 	// --- Legacy monarx shim; identity is the Bearer, not {token} ---
 	s.mux.HandleFunc("GET /v1/kv/projects/{token}/metadata", s.requireCustomer(s.handleShimMetadata))
 
@@ -194,6 +203,9 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("PUT /v1/admin/tenants/{project_id}", s.requireAdmin(s.handleAdminTenantPut))
 	s.mux.HandleFunc("DELETE /v1/admin/tenants/{project_id}", s.requireAdmin(s.handleAdminTenantDelete))
+
+	// --- Controller pull channel for the changelog (per-node admin Bearer) ---
+	s.mux.HandleFunc("GET /v1/admin/changelog", s.requireAdmin(s.handleAdminChangelogList))
 }
 
 // authenticate decides the request scope from the Authorization header ALONE.
