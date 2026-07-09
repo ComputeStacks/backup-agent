@@ -166,7 +166,7 @@ func (p *connPool) openAndMigrate(projectID string) (*sql.DB, error) {
 	if err := os.MkdirAll(p.dir, 0o750); err != nil {
 		return nil, fmt.Errorf("create projects dir: %w", err)
 	}
-	db, err := openSQLite(p.dbPath(projectID))
+	db, err := openSQLite(p.dbPath(projectID), false)
 	if err != nil {
 		return nil, err
 	}

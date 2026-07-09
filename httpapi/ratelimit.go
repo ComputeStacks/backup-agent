@@ -60,3 +60,11 @@ func (rl *rateLimiter) allow(key string) bool {
 	b.tokens--
 	return true
 }
+
+// forget drops a key's bucket (e.g. when a tenant is de-provisioned) so the map
+// tracks the live tenant set rather than every project id ever seen.
+func (rl *rateLimiter) forget(key string) {
+	rl.mu.Lock()
+	delete(rl.buckets, key)
+	rl.mu.Unlock()
+}

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"time"
 )
 
 // ChangelogEntry is one row of the append-only, node-scoped changelog: the
@@ -28,15 +27,14 @@ type ChangelogEntry struct {
 // store opens. Begin / deferred-Rollback / Commit — the Rollback is a no-op
 // after a successful Commit.
 //
-// WRITE-FIRST RULE: fn must issue its write statements before any read. SQLite
-// (WAL) serializes writers, so a write-first tx takes the write lock at its
-// first write and holds it through COMMIT; allocation of an AUTOINCREMENT seq
-// and the commit therefore happen under that single lock, in the same order.
-// That is what makes the changelog seq a gap-free, monotonic replication cursor
-// (a poller reading "seq > cursor" can never skip a lower seq that commits after
-// a higher one). A read-before-write here would also risk deadlocking two
-// writers on the DEFERRED→write lock upgrade. Every changelog writer must go
-// through this helper.
+// control.db opens IMMEDIATE (see openSQLite), so BeginTx takes the write lock
+// at BEGIN. Combined with SQLite WAL single-writer serialization, no two
+// control.db write transactions overlap: a changelog seq is allocated and
+// committed under one held write lock, so allocation order == commit order. The
+// seq is therefore a monotonic, commit-ordered replication cursor — a poller
+// reading "seq > cursor ORDER BY seq" never skips a committed row. (Contiguity
+// is not guaranteed nor required: a rolled-back tx or future pruning may leave
+// harmless gaps, since the cursor only ever moves past committed seqs.)
 func (s *Store) withControlTx(ctx context.Context, fn func(*sql.Tx) error) error {
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
@@ -56,12 +54,13 @@ func (s *Store) withControlTx(ctx context.Context, fn func(*sql.Tx) error) error
 // committed. payload is the full JSON snapshot on an upsert, nil on a delete; it
 // is bound as TEXT (string), NOT []byte — a []byte bind would store BLOB storage
 // class in the TEXT column and json1 (json_extract, …) would then treat it as
-// binary JSONB rather than JSON text.
-func appendChangelogTx(ctx context.Context, tx *sql.Tx, entityType, entityID, projectID, op string, payload []byte) error {
+// binary JSONB rather than JSON text. createdAt is passed in (not read from the
+// clock here) so the changelog row shares its entity row's timestamp exactly.
+func appendChangelogTx(ctx context.Context, tx *sql.Tx, entityType, entityID, projectID, op string, payload []byte, createdAt int64) error {
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO changelog (entity_type, entity_id, project_id, op, payload, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`, entityType, entityID, nullable(projectID), op, nullableJSON(payload), time.Now().Unix()); err != nil {
+	`, entityType, entityID, nullable(projectID), op, nullableJSON(payload), createdAt); err != nil {
 		return fmt.Errorf("store: append changelog %s/%s: %w", entityType, entityID, err)
 	}
 	return nil
@@ -77,11 +76,20 @@ func nullableJSON(b []byte) any {
 	return string(b)
 }
 
+// defaultChangelogPull bounds a ChangelogSince call whose caller passes a
+// non-positive limit (SQLite treats a negative LIMIT as unbounded — a full-table
+// scan). The HTTP handler validates limit separately; this is defense in depth.
+const defaultChangelogPull = 100
+
 // ChangelogSince returns changelog rows with seq > since, ordered by seq
-// ascending, capped at limit (the caller must pass limit > 0). If entityType is
-// non-empty only that type is returned. This is the controller's pull channel:
-// it tracks a per-node cursor and asks for "changes since" it.
+// ascending, capped at limit. A non-positive limit is clamped to
+// defaultChangelogPull. If entityType is non-empty only that type is returned.
+// This is the controller's pull channel: it tracks a per-node cursor and asks
+// for "changes since" it.
 func (s *Store) ChangelogSince(ctx context.Context, since int64, entityType string, limit int) ([]ChangelogEntry, error) {
+	if limit <= 0 {
+		limit = defaultChangelogPull
+	}
 	var (
 		rows *sql.Rows
 		err  error

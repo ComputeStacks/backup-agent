@@ -56,7 +56,7 @@ func (s *Store) CreateActionRequest(ctx context.Context, id, projectID, actionTy
 		`, ar.ID, ar.ProjectID, ar.ActionType, nullableJSON(ar.Params), ar.Status, ar.CreatedAt, ar.UpdatedAt); err != nil {
 			return fmt.Errorf("store: insert action_request %q: %w", id, err)
 		}
-		return appendChangelogTx(ctx, tx, "action_request", ar.ID, ar.ProjectID, "upsert", snapshot)
+		return appendChangelogTx(ctx, tx, "action_request", ar.ID, ar.ProjectID, "upsert", snapshot, ar.CreatedAt)
 	})
 	if err != nil {
 		return ActionRequest{}, err

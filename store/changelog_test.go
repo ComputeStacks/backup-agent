@@ -67,6 +67,15 @@ func TestCreateActionRequest_AppendsChangelog(t *testing.T) {
 	if snap.ID != "act-1" || snap.ActionType != "cdn_purge" {
 		t.Fatalf("snapshot mismatch: %+v", snap)
 	}
+
+	// action_requests.params must also store as TEXT storage class (invariant 4).
+	var ptyp string
+	if err := s.control.QueryRowContext(ctx, `SELECT typeof(params) FROM action_requests WHERE id = 'act-1'`).Scan(&ptyp); err != nil {
+		t.Fatal(err)
+	}
+	if ptyp != "text" {
+		t.Fatalf("params typeof = %q, want text", ptyp)
+	}
 }
 
 // TestWithControlTx_RollbackOnError proves a *written* changelog row is rolled
@@ -76,7 +85,7 @@ func TestWithControlTx_RollbackOnError(t *testing.T) {
 	s := open(t, Options{})
 	boom := errors.New("boom")
 	err := s.withControlTx(ctx, func(tx *sql.Tx) error {
-		if e := appendChangelogTx(ctx, tx, "action_request", "x", "proj-1", "upsert", []byte(`{"id":"x"}`)); e != nil {
+		if e := appendChangelogTx(ctx, tx, "action_request", "x", "proj-1", "upsert", []byte(`{"id":"x"}`), 1); e != nil {
 			return e
 		}
 		return boom // fail AFTER the changelog row was written
@@ -191,7 +200,7 @@ func TestChangelogSince_PaginationAndFilter(t *testing.T) {
 	}
 	// A synthetic row of a different entity_type, to exercise the filter.
 	if err := s.withControlTx(ctx, func(tx *sql.Tx) error {
-		return appendChangelogTx(ctx, tx, "other", "o-1", "proj-1", "upsert", []byte(`{}`))
+		return appendChangelogTx(ctx, tx, "other", "o-1", "proj-1", "upsert", []byte(`{}`), 1)
 	}); err != nil {
 		t.Fatal(err)
 	}

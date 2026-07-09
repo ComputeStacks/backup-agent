@@ -64,7 +64,7 @@ func Open(dataDir string, opts Options) (*Store, error) {
 		return nil, fmt.Errorf("store: create data dir %q: %w", dataDir, err)
 	}
 
-	controlSQL, err := openSQLite(filepath.Join(dataDir, "control.db"))
+	controlSQL, err := openSQLite(filepath.Join(dataDir, "control.db"), true)
 	if err != nil {
 		return nil, err
 	}

@@ -26,13 +26,23 @@ const busyTimeout = 5 * time.Second
 // Open conns are capped low: SQLite is single-writer per file, so a large pool
 // buys nothing and just multiplies file handles. WAL still gives readers
 // concurrency at the file level.
-func openSQLite(path string) (*sql.DB, error) {
+func openSQLite(path string, txlockImmediate bool) (*sql.DB, error) {
 	// Driver-level PRAGMAs via the DSN query so they apply to every pooled
 	// connection the driver opens, not just the first. busy_timeout is in ms.
 	dsn := fmt.Sprintf(
 		"file:%s?_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=busy_timeout(%d)&_pragma=foreign_keys(ON)",
 		path, busyTimeout.Milliseconds(),
 	)
+	// control.db runs multi-statement write transactions (withControlTx); open
+	// them IMMEDIATE so the write lock is taken at BEGIN, not lazily at the first
+	// write. That makes the changelog seq allocation + commit always happen under
+	// one held write lock (so the seq stays commit-ordered without relying on a
+	// write-first convention) and removes the DEFERRED→write snapshot-upgrade BUSY
+	// hazard. Per-project DBs use only single-statement autocommit writes, so they
+	// stay DEFERRED.
+	if txlockImmediate {
+		dsn += "&_txlock=immediate"
+	}
 
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {

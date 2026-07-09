@@ -79,6 +79,7 @@ func TestActions_Validation(t *testing.T) {
 		{"long action_type", `{"action_type":"` + strings.Repeat("x", maxActionTypeLen+1) + `"}`, http.StatusBadRequest},
 		{"no params ok", `{"action_type":"cdn_purge"}`, http.StatusAccepted},
 		{"explicit null params ok", `{"action_type":"cdn_purge","params":null}`, http.StatusAccepted},
+		{"params just under cap ok", `{"action_type":"cdn_purge","params":"` + strings.Repeat("y", maxParamsBytes-16) + `"}`, http.StatusAccepted},
 		{"params too large", `{"action_type":"cdn_purge","params":"` + strings.Repeat("y", maxParamsBytes+1) + `"}`, http.StatusBadRequest},
 	}
 	for _, tc := range cases {

@@ -239,6 +239,7 @@ func (s *Server) handleAdminTenantDelete(w http.ResponseWriter, r *http.Request,
 		s.storeError(w, err, "delete project db")
 		return
 	}
+	s.limiter.forget(projectID) // drop the de-provisioned tenant's rate-limit bucket
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -280,6 +281,12 @@ const (
 // body. The outbox row + its changelog row are written atomically; a controller
 // pulls it later. Rate-limited per tenant. Returns 202 with the new id.
 func (s *Server) handleActionCreate(w http.ResponseWriter, r *http.Request, sc scope) {
+	// Rate-limit before reading/parsing the body so the limiter bounds CPU/alloc,
+	// not just the DB write; a 429 need not consume the body.
+	if !s.limiter.allow(sc.projectID) {
+		writeError(w, http.StatusTooManyRequests, "too many action requests; slow down")
+		return
+	}
 	body, ok := s.readBodyLimited(w, r, maxActionBodyBytes)
 	if !ok {
 		return
@@ -307,10 +314,6 @@ func (s *Server) handleActionCreate(w http.ResponseWriter, r *http.Request, sc s
 	params := req.Params
 	if len(params) == 0 || string(params) == "null" {
 		params = nil
-	}
-	if !s.limiter.allow(sc.projectID) {
-		writeError(w, http.StatusTooManyRequests, "too many action requests; slow down")
-		return
 	}
 	ar, err := s.store.CreateActionRequest(r.Context(), uuid.New().String(), sc.projectID, req.ActionType, params)
 	if err != nil {
