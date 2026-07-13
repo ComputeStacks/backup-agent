@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 )
 
 // control_meta is a small key/value table in control.db for node-local
@@ -22,6 +23,13 @@ const (
 	// backup schedule). This is the guard behind the coordinated DOWN cutovers.
 	MetaFirewallPopulated = "firewall_populated"
 	MetaVolumesPopulated  = "volumes_populated"
+
+	// MetaChangelogAcked is the controller's acknowledged changelog watermark:
+	// the highest seq the single per-node consumer has durably projected. The
+	// prune janitor deletes changelog rows at or below it (subject to an age
+	// floor). Advanced only forward (monotonic) so a stale/rewound ack can't
+	// resurrect the cursor.
+	MetaChangelogAcked = "changelog_acked_seq"
 )
 
 // GetMeta returns the value for key. found=false on a miss (not an error).
@@ -70,4 +78,40 @@ func setMetaTx(ctx context.Context, tx *sql.Tx, key, value string) error {
 		return fmt.Errorf("store: set control_meta %q: %w", key, err)
 	}
 	return nil
+}
+
+// SetChangelogAcked advances the controller's acked changelog watermark. The
+// update is monotonic: a seq at or below the stored value is silently ignored (no
+// error), so a duplicate or reordered ack from the controller can never rewind the
+// prune watermark and drop rows the controller still needs. Not changelogged
+// (consumer state).
+func (s *Store) SetChangelogAcked(ctx context.Context, seq int64) error {
+	if seq < 0 {
+		return errors.New("store: SetChangelogAcked requires seq >= 0")
+	}
+	_, err := s.control.ExecContext(ctx, `
+		INSERT INTO control_meta (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+		WHERE CAST(excluded.value AS INTEGER) > CAST(control_meta.value AS INTEGER)
+	`, MetaChangelogAcked, seq)
+	if err != nil {
+		return fmt.Errorf("store: set changelog acked: %w", err)
+	}
+	return nil
+}
+
+// GetChangelogAcked returns the acked watermark (0 if never set).
+func (s *Store) GetChangelogAcked(ctx context.Context) (int64, error) {
+	v, found, err := s.GetMeta(ctx, MetaChangelogAcked)
+	if err != nil {
+		return 0, err
+	}
+	if !found || v == "" {
+		return 0, nil
+	}
+	seq, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("store: parse changelog acked %q: %w", v, err)
+	}
+	return seq, nil
 }

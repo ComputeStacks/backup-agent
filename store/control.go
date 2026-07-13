@@ -128,6 +128,36 @@ var controlMigrations = []migration{
 			return err
 		},
 	},
+	{
+		version: 4,
+		up: func(tx *sql.Tx) error {
+			// Durable scheduler + convergence bake-in.
+			//  - schedules: per-volume backup cron + next_fire_at. The durable
+			//    replacement for the in-RAM robfig runner and the Consul schedule
+			//    mirror; a tick loop inserts a task and advances next_fire_at in
+			//    one control.db tx (exactly-once fire). Node-local scheduler state
+			//    -> NOT changelogged.
+			//  - generation/applied_generation on the DOWN tables: the controller
+			//    bumps generation via a DOWN write; the agent reports the version it
+			//    actually enforced. Added now as a schema bake-in so the column set
+			//    is stable; the applied_generation writeback is wired in a later
+			//    phase (a controller-pull consumer doesn't need it yet).
+			_, err := tx.Exec(`
+				CREATE TABLE schedules (
+					volume_name  TEXT    PRIMARY KEY,
+					cron_expr    TEXT    NOT NULL,
+					next_fire_at INTEGER NOT NULL,
+					updated_at   INTEGER NOT NULL
+				);
+
+				ALTER TABLE volumes        ADD COLUMN generation         INTEGER NOT NULL DEFAULT 0;
+				ALTER TABLE volumes        ADD COLUMN applied_generation INTEGER NOT NULL DEFAULT 0;
+				ALTER TABLE firewall_rules ADD COLUMN generation         INTEGER NOT NULL DEFAULT 0;
+				ALTER TABLE firewall_rules ADD COLUMN applied_generation INTEGER NOT NULL DEFAULT 0;
+			`)
+			return err
+		},
+	},
 }
 
 // ErrTenantExists is returned when UpsertTenant would collide on token_hash with

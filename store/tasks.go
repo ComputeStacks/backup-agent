@@ -9,12 +9,12 @@ import (
 	"time"
 )
 
-// Task is a unit of work for this node — a backup/restore/delete/export or a
-// firewall reload. It replaces the Consul jobs/<jid> envelope. The controller
-// submits a task DOWN (POST /v1/admin/tasks) and the agent reports lifecycle UP
-// via the changelog (entity_type "task"). name is one of volume.backup,
-// volume.restore, backup.delete, backup.export, firewall. Result carries the
-// terminal payload (export url/size/expiry/error; a backup's last_backup).
+// Task is a unit of work for this node — a backup/restore/delete/export/trash.
+// It replaces the Consul jobs/<jid> envelope. The controller submits a task DOWN
+// (POST /v1/admin/tasks) and the agent reports lifecycle UP via the changelog
+// (entity_type "task"). name is one of volume.backup, volume.restore,
+// backup.delete, backup.export, volume.trash. Result carries the terminal payload
+// (export url/size/expiry/error; a backup's last_backup; failure output).
 type Task struct {
 	ID        string          `json:"id"`
 	ProjectID string          `json:"project_id,omitempty"`
@@ -74,12 +74,39 @@ func getTaskTx(ctx context.Context, tx *sql.Tx, id string) (Task, error) {
 	return scanTask(tx.QueryRowContext(ctx, `SELECT `+taskColumns+` FROM tasks WHERE id = ?`, id))
 }
 
+// insertTaskTx inserts a task and, in the same transaction, appends its changelog
+// row (entity_type "task", op "upsert"). It is idempotent on the task id
+// (ON CONFLICT(id) DO NOTHING): a duplicate id inserts no row and appends no
+// changelog entry, returning created=false. Callers must pre-set t.Status,
+// t.CreatedAt, t.UpdatedAt and pass snapshot = json.Marshal(t). Shared by
+// CreateTask (controller/DOWN) and FireDueBackup (scheduler).
+func insertTaskTx(ctx context.Context, tx *sql.Tx, t Task, snapshot []byte) (bool, error) {
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO tasks (id, project_id, name, node, volume, archive, audit_id, params, status, result_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO NOTHING
+	`, t.ID, nullable(t.ProjectID), t.Name, t.Node, nullable(t.Volume), nullable(t.Archive), t.AuditID, nullableJSON(t.Params), t.Status, nullableJSON(t.Result), t.CreatedAt, t.UpdatedAt)
+	if err != nil {
+		return false, fmt.Errorf("store: insert task %q: %w", t.ID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("store: task %q rows affected: %w", t.ID, err)
+	}
+	if n == 0 {
+		return false, nil // duplicate id: no row inserted -> no changelog append
+	}
+	if err := appendChangelogTx(ctx, tx, "task", t.ID, t.ProjectID, "upsert", snapshot, t.CreatedAt); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // CreateTask inserts a task and, in the SAME control.db transaction, appends its
-// changelog row (entity_type "task", op "upsert"). It is idempotent on the task
-// id: a duplicate POST (same id) is a no-op — no second row, no second changelog
-// entry, no re-dispatch — and returns created=false. This is what makes
-// at-least-once controller delivery safe. Dispatch to the worker pool is the
-// dispatcher's job (v2.3.0), not this method's.
+// changelog row. It is idempotent on the task id: a duplicate POST (same id) is a
+// no-op — no second row, no second changelog entry, no re-dispatch — and returns
+// created=false. This is what makes at-least-once controller delivery safe.
+// Dispatch to the worker pool is the dispatcher's job, not this method's.
 func (s *Store) CreateTask(ctx context.Context, t Task) (created bool, err error) {
 	if t.ID == "" || t.Name == "" || t.Node == "" {
 		return false, errors.New("store: CreateTask requires id, name, node")
@@ -96,23 +123,8 @@ func (s *Store) CreateTask(ctx context.Context, t Task) (created bool, err error
 	}
 
 	err = s.withControlTx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `
-			INSERT INTO tasks (id, project_id, name, node, volume, archive, audit_id, params, status, result_json, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(id) DO NOTHING
-		`, t.ID, nullable(t.ProjectID), t.Name, t.Node, nullable(t.Volume), nullable(t.Archive), t.AuditID, nullableJSON(t.Params), t.Status, nullableJSON(t.Result), t.CreatedAt, t.UpdatedAt)
-		if err != nil {
-			return fmt.Errorf("store: insert task %q: %w", t.ID, err)
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("store: task %q rows affected: %w", t.ID, err)
-		}
-		if n == 0 {
-			return nil // duplicate id: no row inserted -> no changelog append
-		}
-		created = true
-		return appendChangelogTx(ctx, tx, "task", t.ID, t.ProjectID, "upsert", snapshot, t.CreatedAt)
+		created, err = insertTaskTx(ctx, tx, t, snapshot)
+		return err
 	})
 	if err != nil {
 		return false, err // the insert/append rolled back: never report created on error
@@ -156,29 +168,51 @@ func (s *Store) UpdateTaskStatus(ctx context.Context, id, status string, result 
 	})
 }
 
-// CancelPendingTask flips a task pending -> cancelled (and appends the snapshot)
-// only while it is still pending; a task already dispatched/terminal is left
-// untouched. Returns cancelled=false if the task was not pending (or absent).
-func (s *Store) CancelPendingTask(ctx context.Context, id string) (cancelled bool, err error) {
+// ClaimTask atomically transitions a task pending -> running and appends the
+// snapshot, only while it is still pending. Returns claimed=false if the task was
+// not pending (already claimed/terminal/cancelled/absent). The dispatcher is the
+// only caller; this CAS is what guarantees a task dispatches at most once even if
+// the in-process wake signal and the backstop drain race on the same row.
+func (s *Store) ClaimTask(ctx context.Context, id string) (claimed bool, err error) {
+	claimed, err = s.casTaskStatus(ctx, id, TaskPending, TaskRunning)
+	return claimed, err
+}
+
+// UnclaimTask reverts a task running -> pending. It is used only when the
+// dispatcher claimed a task (typically an export) but could not hand it to a
+// worker (pool full): the row goes back to pending so a later wake retries it. The
+// CAS on running means it can never stomp a task a worker has already moved
+// terminal. A crash between claim and this revert leaves the task running, which
+// the boot reconcile then fails (an export is never blindly re-run).
+func (s *Store) UnclaimTask(ctx context.Context, id string) (unclaimed bool, err error) {
+	unclaimed, err = s.casTaskStatus(ctx, id, TaskRunning, TaskPending)
+	return unclaimed, err
+}
+
+// casTaskStatus flips a task from -> to only while it is currently in `from`,
+// appending the resulting snapshot in the same tx. Returns false (no changelog
+// append) when the row was not in `from` (or absent).
+func (s *Store) casTaskStatus(ctx context.Context, id, from, to string) (bool, error) {
 	if id == "" {
-		return false, errors.New("store: CancelPendingTask requires id")
+		return false, errors.New("store: casTaskStatus requires id")
 	}
 	now := time.Now().Unix()
-	err = s.withControlTx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `
-			UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND status = ?
-		`, TaskCancelled, now, id, TaskPending)
+	var changed bool
+	err := s.withControlTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND status = ?`,
+			to, now, id, from)
 		if err != nil {
-			return fmt.Errorf("store: cancel task %q: %w", id, err)
+			return fmt.Errorf("store: cas task %q %s->%s: %w", id, from, to, err)
 		}
 		n, err := res.RowsAffected()
 		if err != nil {
 			return fmt.Errorf("store: task %q rows affected: %w", id, err)
 		}
 		if n == 0 {
-			return nil // not pending (dispatched/terminal/absent): no-op, not changelogged
+			return nil // not in `from`: no-op, not changelogged
 		}
-		cancelled = true
+		changed = true
 		t, err := getTaskTx(ctx, tx, id)
 		if err != nil {
 			return fmt.Errorf("store: reload task %q: %w", id, err)
@@ -190,9 +224,17 @@ func (s *Store) CancelPendingTask(ctx context.Context, id string) (cancelled boo
 		return appendChangelogTx(ctx, tx, "task", t.ID, t.ProjectID, "upsert", snapshot, now)
 	})
 	if err != nil {
-		return false, err // the update/append rolled back: never report cancelled on error
+		return false, err
 	}
-	return cancelled, nil
+	return changed, nil
+}
+
+// CancelPendingTask flips a task pending -> cancelled (and appends the snapshot)
+// only while it is still pending; a task already dispatched/terminal is left
+// untouched. Returns cancelled=false if the task was not pending (or absent).
+func (s *Store) CancelPendingTask(ctx context.Context, id string) (cancelled bool, err error) {
+	cancelled, err = s.casTaskStatus(ctx, id, TaskPending, TaskCancelled)
+	return cancelled, err
 }
 
 // GetTask returns a task by id. found=false on a miss (not an error).
@@ -209,13 +251,24 @@ func (s *Store) GetTask(ctx context.Context, id string) (Task, bool, error) {
 }
 
 // ListPendingTasks returns this node's pending tasks in creation order. It is
-// the dispatcher's boot/backstop drain source (v2.3.0).
+// the dispatcher's boot/backstop drain source.
 func (s *Store) ListPendingTasks(ctx context.Context, node string) ([]Task, error) {
+	return s.listTasksByStatus(ctx, node, TaskPending)
+}
+
+// ListRunningTasks returns this node's running tasks in creation order. It is the
+// boot crash-reconcile source: a task left running across a restart is dead work
+// and must be failed (never auto-replayed for destructive kinds).
+func (s *Store) ListRunningTasks(ctx context.Context, node string) ([]Task, error) {
+	return s.listTasksByStatus(ctx, node, TaskRunning)
+}
+
+func (s *Store) listTasksByStatus(ctx context.Context, node, status string) ([]Task, error) {
 	rows, err := s.control.QueryContext(ctx,
 		`SELECT `+taskColumns+` FROM tasks WHERE node = ? AND status = ? ORDER BY created_at, id`,
-		node, TaskPending)
+		node, status)
 	if err != nil {
-		return nil, fmt.Errorf("store: list pending tasks: %w", err)
+		return nil, fmt.Errorf("store: list %s tasks: %w", status, err)
 	}
 	defer rows.Close()
 
