@@ -470,6 +470,7 @@ func (s *Server) handleAdminTaskCreate(w http.ResponseWriter, r *http.Request, _
 		s.storeError(w, err, "create task")
 		return
 	}
+	s.fireHook(s.cfg.OnTaskCreated) // wake the dispatcher
 	writeJSON(w, http.StatusAccepted, taskCreateResponse{ID: req.ID, Created: created})
 }
 
@@ -510,6 +511,7 @@ func (s *Server) handleAdminFirewallPut(w http.ResponseWriter, r *http.Request, 
 		s.storeError(w, err, "put firewall_rules")
 		return
 	}
+	s.fireHook(s.cfg.OnFirewallChanged) // wake the firewall reconciler
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -521,6 +523,7 @@ func (s *Server) handleAdminFirewallDelete(w http.ResponseWriter, r *http.Reques
 		s.storeError(w, err, "delete firewall_rules")
 		return
 	}
+	s.fireHook(s.cfg.OnFirewallChanged) // wake the firewall reconciler
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -558,6 +561,7 @@ func (s *Server) handleAdminVolumePut(w http.ResponseWriter, r *http.Request, _ 
 		s.storeError(w, err, "put volume")
 		return
 	}
+	s.fireHook(s.cfg.OnVolumesChanged) // wake the scheduler reconciler
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -570,6 +574,7 @@ func (s *Server) handleAdminVolumeDelete(w http.ResponseWriter, r *http.Request,
 		s.storeError(w, err, "delete volume")
 		return
 	}
+	s.fireHook(s.cfg.OnVolumesChanged) // wake the scheduler reconciler
 	w.WriteHeader(http.StatusOK)
 }
 

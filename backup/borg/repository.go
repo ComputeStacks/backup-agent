@@ -14,7 +14,9 @@ Uses local borg installation:
 package borg
 
 import (
+	"context"
 	"cs-agent/sshremote"
+	"cs-agent/store"
 	"cs-agent/types"
 	"reflect"
 	"strconv"
@@ -24,8 +26,8 @@ import (
 	"github.com/getsentry/sentry-go"
 )
 
-func FindRepository(vol *types.Volume, source *types.Volume) (*Repository, *LogMessage) {
-	r := Repository{Name: vol.Name, Retention: vol.Retention, SourceVolumeName: source.Name}
+func FindRepository(st *store.Store, vol *types.Volume, source *types.Volume) (*Repository, *LogMessage) {
+	r := Repository{Name: vol.Name, Retention: vol.Retention, SourceVolumeName: source.Name, Store: st}
 
 	containerBuilt, containerErr := r.InitBackupContainer(vol, source)
 	if containerErr != nil {
@@ -82,12 +84,8 @@ func (r *Repository) Setup(vol *types.Volume, source *types.Volume) *LogMessage 
 		return &log
 	}
 
-	consulRepo := ConsulRepository{Name: r.Name}
-	consulErr := consulRepo.Save()
-	if consulErr != nil {
-		borgLogger().Warn("Fatal error saving data to Consul", "repository", r.Name, "error", consulErr.Error())
-		sentry.CaptureException(consulErr)
-	}
+	// Register the (now-initialized) repository's observed state in control.db.
+	r.Sync()
 	return nil
 }
 
@@ -180,7 +178,7 @@ func (r *Repository) Prune() *LogMessage {
 		return &log
 	}
 
-	r.SyncConsul()
+	r.Sync()
 	borgLogger().Info("Completed prune event", "volume_name", r.Name)
 	return nil
 }
@@ -223,7 +221,7 @@ func (r *Repository) compactContainer() *LogMessage {
 	}
 
 	// Refresh Consul on-disk usage stats now that space has been reclaimed.
-	r.SyncConsul()
+	r.Sync()
 	borgLogger().Info("Completed compact event", "volume_name", r.Name)
 	return nil
 }
@@ -273,52 +271,44 @@ func nfsCompactCommand(name string) (string, bool) {
 	return cmd, true
 }
 
-func (r *Repository) SyncConsul() {
+// Sync reports the repository's observed state (on-disk size + archive names) UP
+// into control.db via the changelog (entity_type "repository"). It is the
+// store-backed successor to the old Consul borg/repository/<name> write. A no-op
+// when there is no store handle or no live container to read from.
+func (r *Repository) Sync() {
+	if r.Store == nil {
+		return
+	}
 	if reflect.ValueOf(r.Container).IsNil() {
-		return
-	}
-	consulRepo, consulRepoErr := FindConsulRepo(r.Name)
-
-	if consulRepoErr != nil {
-		borgLogger().Error("Error during SyncConsul", "function", "FindConsulRepo", "error", consulRepoErr.Error())
-		return
-	}
-
-	if consulRepo == nil {
-		borgLogger().Error("Error during SyncConsul", "function", "FindConsulRepo", "error", "unable to find consulRepo")
 		return
 	}
 
 	// get list of archives
 	contents, contentsErr := r.Contents()
-
 	if contentsErr != nil {
-		borgLogger().Error("Error during SyncConsul", "function", "Repository.Contents()", "errorCode", contentsErr.MsgID, "error", contentsErr.Message)
+		borgLogger().Error("Error during Sync", "function", "Repository.Contents()", "errorCode", contentsErr.MsgID, "error", contentsErr.Message)
 		return
 	}
 
-	consulRepo.Archives = []string{} // start with a fresh, and empty, archive list
-
+	archives := []string{}
 	for _, item := range contents.Archives {
-		consulRepo.Archives = append(consulRepo.Archives, item.Name)
+		archives = append(archives, item.Name)
 	}
 
 	repoInfo, repoInfoErr := r.Info()
-
 	if repoInfoErr != nil {
-		borgLogger().Error("Error during SyncConsul", "function", "Repository.Info()", "errorCode", repoInfoErr.MsgID, "error", repoInfoErr.Message)
+		borgLogger().Error("Error during Sync", "function", "Repository.Info()", "errorCode", repoInfoErr.MsgID, "error", repoInfoErr.Message)
 		return
 	}
 
-	consulRepo.SizeOnDisk = repoInfo.Cache.Stats.UniqueCSize
-	consulRepo.TotalSize = repoInfo.Cache.Stats.TotalCSize
-
-	saveErr := consulRepo.Save()
-
-	if saveErr != nil {
-		borgLogger().Error("Failed to save data to consul", "function", "consulRepo.Save()", "error", saveErr.Error())
-		sentry.CaptureException(saveErr)
-
+	if err := r.Store.UpsertRepository(context.Background(), store.Repository{
+		Name:       r.Name,
+		SizeOnDisk: int64(repoInfo.Cache.Stats.UniqueCSize),
+		TotalSize:  int64(repoInfo.Cache.Stats.TotalCSize),
+		Archives:   archives,
+	}); err != nil {
+		borgLogger().Error("Failed to sync repository to store", "function", "Sync", "error", err.Error())
+		sentry.CaptureException(err)
 	}
 }
 

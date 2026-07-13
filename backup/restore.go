@@ -1,9 +1,10 @@
 package backup
 
 import (
+	"context"
 	"cs-agent/backup/borg"
 	"cs-agent/containermgr"
-	"cs-agent/csevent"
+	"cs-agent/store"
 	"cs-agent/types"
 	"os"
 	"strconv"
@@ -11,124 +12,121 @@ import (
 
 	"github.com/docker/docker/client"
 	"github.com/getsentry/sentry-go"
-	consulAPI "github.com/hashicorp/consul/api"
 	"github.com/spf13/viper"
 )
 
-func Restore(consul *consulAPI.Client, job *types.Job) {
+func Restore(ctx context.Context, st *store.Store, task store.Task, projectEvent *progress) error {
 	defer sentry.Recover()
 	hostname, _ := os.Hostname()
-	kv := consul.KV()
-	opts := &consulAPI.QueryOptions{RequireConsistent: true}
-	destData, _, destVolErr := kv.Get("volumes/"+job.VolumeName, opts)
+	params := parseParams(task)
+
+	destData, found, destVolErr := st.GetVolume(ctx, task.Volume)
 	if destVolErr != nil {
 		sentry.CaptureException(destVolErr)
-		return
+		return destVolErr
 	}
-	if destData == nil {
-		backupLogger().Warn("Skipping restore job for unknown destination volume", "volume", job.VolumeName, "source_volume", job.SourceVolumeName)
-		return
+	if !found {
+		backupLogger().Warn("Skipping restore job for unknown destination volume", "volume", task.Volume, "source_volume", params.SourceVolume)
+		return nil
 	}
-	data, _, err := kv.Get("volumes/"+job.SourceVolumeName, opts)
+	srcData, found, err := st.GetVolume(ctx, params.SourceVolume)
 	if err != nil {
 		sentry.CaptureException(err)
-		return
+		return err
 	}
-	if data == nil {
-		backupLogger().Warn("Skipping restore job for unknown volume", "volume", job.VolumeName, "source_volume", job.SourceVolumeName)
-		return
+	if !found {
+		backupLogger().Warn("Skipping restore job for unknown volume", "volume", task.Volume, "source_volume", params.SourceVolume)
+		return nil
 	}
-	backupLogger().Info("Performing volume restore", "volume", job.VolumeName, "source_volume", job.SourceVolumeName)
+	backupLogger().Info("Performing volume restore", "volume", task.Volume, "source_volume", params.SourceVolume)
 
 	// Load Source Volume
-	vol, err := types.LoadVolume(data.Value)
+	vol, err := types.LoadVolume(srcData.Config)
 	if err != nil {
-		backupLogger().Warn("Fatal error parsing volume from consul data", "source_volume", data.Value, "error", err.Error())
+		backupLogger().Warn("Fatal error parsing source volume", "source_volume", params.SourceVolume, "error", err.Error())
 		sentry.CaptureException(err)
-		return
+		return err
 	}
 
 	// Load Destination Volume
-	destVol, destVolErr := types.LoadVolume(destData.Value)
-	if destVolErr != nil {
-		backupLogger().Warn("Fatal error parsing destination volume from consul data", "volume", destData.Value, "error", err.Error())
+	destVol, err := types.LoadVolume(destData.Config)
+	if err != nil {
+		backupLogger().Warn("Fatal error parsing destination volume", "volume", task.Volume, "error", err.Error())
 		sentry.CaptureException(err)
-		return
+		return err
 	}
 
 	// Start restore
-	backupLogger().Info("Preparing to restore volume", "volume", job.VolumeName, "source_volume", job.SourceVolumeName)
-	volumeIds := []int{destVol.ID}
-	projectEvent := csevent.New(destVol.ProjectID, volumeIds, "agent-bde07117ae85937d", "volume.restore", job.AuditID)
-
-	defer projectEvent.CloseEvent()
+	backupLogger().Info("Preparing to restore volume", "volume", task.Volume, "source_volume", params.SourceVolume)
 
 	// Sanity check to ensure we should perform the restore
 	if destVol.Node != hostname {
-		backupLogger().Info("Halting restore job because destination volume is not under my control", "volume", job.VolumeName, "source_volume", job.SourceVolumeName)
+		backupLogger().Info("Halting restore job because destination volume is not under my control", "volume", task.Volume, "source_volume", params.SourceVolume)
 		projectEvent.EventLog.Status = "failed"
 		projectEvent.PostEventUpdate("agent-806c0cc330c2ea4d", "Halting restore job because destination volume is not under my control.")
-		return
+		return nil
 	}
 
 	if !viper.GetBool("backups.borg.nfs") && !viper.GetBool("backups.borg.ssh.enabled") {
 		if vol.Node != hostname {
-			backupLogger().Info("Halting restore job because source volume is not accessible on host", "volume", job.VolumeName, "source_volume", job.SourceVolumeName)
+			backupLogger().Info("Halting restore job because source volume is not accessible on host", "volume", task.Volume, "source_volume", params.SourceVolume)
 			projectEvent.EventLog.Status = "failed"
 			projectEvent.PostEventUpdate("agent-bfba3466b03d45e8", "Halting restore job because source volume is not accessible on host.")
-			return
+			return nil
 		}
 	}
 
-	if job.ArchiveName == "" {
-		backupLogger().Warn("Error restoring volume, missing archive name", "volume", job.VolumeName, "source_volume", job.SourceVolumeName)
+	if task.Archive == "" {
+		backupLogger().Warn("Error restoring volume, missing archive name", "volume", task.Volume, "source_volume", params.SourceVolume)
 		projectEvent.EventLog.Status = "failed"
 		projectEvent.PostEventUpdate("agent-548b1d752057add0", "Failed to restore volume due to missing backup name.")
-		return
+		return nil
 	}
 
-	repo, findRepoErr := borg.FindRepository(&destVol, &vol)
+	repo, findRepoErr := borg.FindRepository(st, &destVol, &vol)
 
 	if findRepoErr != nil {
-		// Can't restore from an empty repository.
-		if &destVol.Name == &vol.Name {
-			backupLogger().Warn("Error Restoring volume", "volume", job.VolumeName, "source_volume", job.SourceVolumeName, "error", findRepoErr.Message)
+		// Can't restore from an empty repository. (A same-volume restore — source
+		// == destination — has no other repo to fall back to, so fail rather than
+		// try to create one. This was historically a pointer compare that never
+		// fired; it is a value compare now.)
+		if destVol.Name == vol.Name {
+			backupLogger().Warn("Error Restoring volume", "volume", task.Volume, "source_volume", params.SourceVolume, "error", findRepoErr.Message)
 			projectEvent.EventLog.Status = "failed"
 			projectEvent.PostEventUpdate("agent-81023b3bc0541171", findRepoErr.ToYaml())
-			return
+			return nil
 		}
 
 		// For SSH-backed repositories, we may need to first create the repository.
 		if findRepoErr.MsgID == "Repository.DoesNotExist" && viper.GetBool("backups.borg.ssh.enabled") {
 			// Empty SSH repos return 'InvalidRepository' rather than 'DoesNotExist'.
-			repo = &borg.Repository{Name: vol.Name}
+			repo = &borg.Repository{Name: vol.Name, Store: st}
 			// Build backup container
 			repoErr := repo.Setup(&destVol, &vol)
 			if repoErr != nil {
-				backupLogger().Warn("Error Setting up repo for volume restore", "volume", job.VolumeName, "source_volume", job.SourceVolumeName, "error", repoErr.Message)
+				backupLogger().Warn("Error Setting up repo for volume restore", "volume", task.Volume, "source_volume", params.SourceVolume, "error", repoErr.Message)
 				projectEvent.EventLog.Status = "failed"
 				projectEvent.PostEventUpdate("agent-ea3613609e732d68", repoErr.ToYaml())
-				projectEvent.CloseEvent()
-				return
+				return nil
 			}
 		} else {
-			backupLogger().Warn("Error Restoring volume", "volume", job.VolumeName, "source_volume", job.SourceVolumeName, "error", findRepoErr.Message)
+			backupLogger().Warn("Error Restoring volume", "volume", task.Volume, "source_volume", params.SourceVolume, "error", findRepoErr.Message)
 			projectEvent.EventLog.Status = "failed"
 			projectEvent.PostEventUpdate("agent-2e2a3156b8e2ffd2", findRepoErr.ToYaml())
-			return
+			return nil
 		}
 	}
 
 	defer repo.StopContainer()
 
-	archive, findArchiveErr := repo.FindArchive(job.ArchiveName)
+	archive, findArchiveErr := repo.FindArchive(task.Archive)
 
 	if findArchiveErr != nil {
-		backupLogger().Warn("Error Restoring volume", "volume", job.VolumeName, "source_volume", job.SourceVolumeName, "error", findArchiveErr.Message)
+		backupLogger().Warn("Error Restoring volume", "volume", task.Volume, "source_volume", params.SourceVolume, "error", findArchiveErr.Message)
 		projectEvent.EventLog.Status = "failed"
 		projectEvent.PostEventUpdate("agent-7d32bd2230b39408", findArchiveErr.ToYaml())
 		repo.StopContainer()
-		return
+		return nil
 	}
 
 	cli, restoreDockerErr := client.NewClientWithOpts(client.WithVersion(viper.GetString("docker.version")))
@@ -137,7 +135,7 @@ func Restore(consul *consulAPI.Client, job *types.Job) {
 		projectEvent.EventLog.Status = "failed"
 		projectEvent.PostEventUpdate("agent-05297a0a0438a5bf", restoreDockerErr.Error())
 		repo.StopContainer()
-		return
+		return nil
 	}
 	containers, findAllErr := containermgr.FindAllByService(cli, strconv.Itoa(destVol.ServiceID), true)
 
@@ -146,7 +144,7 @@ func Restore(consul *consulAPI.Client, job *types.Job) {
 		projectEvent.EventLog.Status = "failed"
 		projectEvent.PostEventUpdate("agent-dc1ec275fcf91a6c", findAllErr.Error())
 		repo.StopContainer()
-		return
+		return nil
 	}
 
 	backupLogger().Debug("Running PreRestore hook", "volume", vol.Name)
@@ -157,9 +155,11 @@ func Restore(consul *consulAPI.Client, job *types.Job) {
 		repo.StopContainer()
 		backupLogger().Warn("Failed to restore volume", "volume", vol.Name, "archive", archive.Name, "error", "PreRestore hook failed.")
 		projectEvent.EventLog.Status = "failed"
-		projectEvent.CloseEvent()
-		return
+		return nil
 	}
+
+	// Override file paths for our custom strategies.
+	filePaths := params.FilePaths
 
 	failedToStop := false
 	for _, c := range containers {
@@ -177,19 +177,15 @@ func Restore(consul *consulAPI.Client, job *types.Job) {
 			projectEvent.PostEventUpdate("agent-0b33976078a50679", "rollback restore complete successfully.")
 		}
 	} else {
-		// Override file paths for our custom strategies
 		switch vol.Strategy {
 		case "mysql", "mariadb":
-			//job.FilePaths = []string{"backups/"}
-			job.FilePaths = []string{}
-			break
+			filePaths = []string{}
 		case "postgres":
-			job.FilePaths = []string{}
-			break
+			filePaths = []string{}
 		}
 
 		backupLogger().Info("Restoring volume", "source_volume", vol.Name, "volume", destVol.Name, "archive", archive.Name)
-		restoreErr := archive.Restore(job.FilePaths)
+		restoreErr := archive.Restore(filePaths)
 		if restoreErr != nil {
 			projectEvent.PostEventUpdate("agent-6dfe4e7b471fdd4c", restoreErr.ToYaml())
 			projectEvent.EventLog.Status = "failed"
@@ -214,4 +210,5 @@ func Restore(consul *consulAPI.Client, job *types.Job) {
 		time.Sleep(time.Second) // give each container a second to boot to avoid thrashing the disk
 	}
 
+	return nil
 }

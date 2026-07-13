@@ -53,7 +53,7 @@ func (a *Archive) Create() (ArchiveMessage, *LogMessage) {
 	if log != (LogMessage{}) {
 		return ArchiveMessage{}, &log
 	}
-	a.Repository.SyncConsul()
+	a.Repository.Sync()
 	marshalErr := json.Unmarshal([]byte(response), &borgResponse)
 	if marshalErr == nil {
 		borgLogger().Info("Completed backup", "archive", borgResponse.Archive.ID, "duration", hclog.Fmt("%.5f", borgResponse.Archive.Duration))
@@ -172,7 +172,7 @@ func (a *Archive) Delete() ([]LogMessage, *LogMessage) {
 		}
 		results = append(results, result)
 	}
-	a.Repository.SyncConsul()
+	a.Repository.Sync()
 
 	borgLogger().Info("Completed Archive Delete event", "volume", a.Repository.Name, "archive", a.Name)
 	return results, nil

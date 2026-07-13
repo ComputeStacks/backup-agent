@@ -2,10 +2,6 @@ package types
 
 import (
 	"encoding/json"
-	"os"
-
-	consulAPI "github.com/hashicorp/consul/api"
-	"github.com/robfig/cron/v3"
 )
 
 type Volume struct {
@@ -35,11 +31,6 @@ type Volume struct {
 	RestoreContinueOnError bool     `json:"restore_error_cont"` // Continue if an error is encountered with `pre_restore`
 }
 
-type VolumeJob struct {
-	JID      cron.EntryID `json:"jid"`
-	Schedule string       `json:"schedule"`
-}
-
 func LoadVolume(value []byte) (Volume, error) {
 	var vol Volume
 	err := json.Unmarshal(value, &vol)
@@ -54,58 +45,6 @@ func (vol Volume) JSONEncode() []byte {
 		return j
 	}
 	return []byte{}
-}
-
-// Find the active job for this volume
-func (vol Volume) ScheduledJob(consul ConsulKV) (*VolumeJob, error) {
-	var vj VolumeJob
-	hostname, _ := os.Hostname()
-	volumePath := "borg/nodes/" + hostname + "/schedules/" + vol.Name
-	data, _, err := consul.Get(volumePath, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	if data == nil {
-		return nil, nil
-	}
-
-	if jsonErr := json.Unmarshal(data.Value, &vj); jsonErr != nil {
-		return nil, jsonErr
-	}
-
-	return &vj, nil
-}
-
-func (vol Volume) ClearScheduledJob(consul ConsulKV) {
-	hostname, _ := os.Hostname()
-	volumePath := "borg/nodes/" + hostname + "/schedules/" + vol.Name
-	_, _ = consul.Delete(volumePath, nil)
-}
-
-func (vol Volume) AddScheduledJob(consul ConsulKV, jid cron.EntryID) error {
-	volJob := VolumeJob{
-		JID:      jid,
-		Schedule: vol.Freq,
-	}
-	hostname, _ := os.Hostname()
-	volumePath := "borg/nodes/" + hostname + "/schedules/" + vol.Name
-	//jIdString := strconv.FormatInt(int64(volJob.JID), 10)
-
-	data, err := json.Marshal(volJob)
-
-	if err != nil {
-		return err
-	}
-
-	kp := consulAPI.KVPair{
-		Key:   volumePath,
-		Value: data,
-	}
-	if _, consulErr := consul.Put(&kp, nil); consulErr != nil {
-		return consulErr
-	}
-	return nil
 }
 
 func (vol Volume) IsEmpty() bool {

@@ -95,12 +95,21 @@ type Config struct {
 	// goal. <=0 falls back to defaultMaxBodyBytes.
 	MaxBodyBytes int64
 
-	// ProxyToConsul gates the dual-run proxy-to-Consul leg for un-migrated
-	// projects. DEFAULT FALSE and intentionally inert: the proxy must not
-	// serve cross-tenant reads until its Bearer→X-Consul-Token wire-auth is
-	// resolved. While false, an unknown tenant is a 401 and an unknown path a
-	// 404 — never a forward to Consul.
-	ProxyToConsul bool
+	// Reconcile hooks let the DOWN admin handlers wake the in-process consumers
+	// after a successful control.db write, so a controller submission is acted on
+	// promptly instead of waiting for the next backstop tick. main wires them to
+	// the dispatcher / scheduler / firewall reconciler; all are optional (nil-safe)
+	// and MUST be non-blocking (they are called on the request goroutine).
+	OnTaskCreated     func()
+	OnVolumesChanged  func()
+	OnFirewallChanged func()
+}
+
+// fireHook invokes an optional reconcile hook if set.
+func (s *Server) fireHook(hook func()) {
+	if hook != nil {
+		hook()
+	}
 }
 
 const defaultMaxBodyBytes = 10 << 20 // 10 MiB
@@ -182,7 +191,7 @@ func (s *Server) Handler() http.Handler { return s.mux }
 // Start binds ListenAddr and serves in the calling goroutine. main.go runs it in
 // its own goroutine. It returns http.ErrServerClosed on a graceful Shutdown.
 func (s *Server) Start() error {
-	s.log.Info("metadata HTTP server listening", "addr", s.cfg.ListenAddr, "proxy_to_consul", s.cfg.ProxyToConsul)
+	s.log.Info("metadata HTTP server listening", "addr", s.cfg.ListenAddr)
 	return s.http.ListenAndServe()
 }
 
@@ -271,14 +280,8 @@ func (s *Server) authenticate(ctx context.Context, r *http.Request) (scope, *aut
 		return scope{}, &authError{status: http.StatusInternalServerError, msg: "auth backend error"}
 	}
 	if !found {
-		// Unknown tenant. The dual-run proxy-to-Consul leg is the only thing
-		// that could serve this, and it is a deliberate BLOCKER: gated off by
-		// default until its Bearer→X-Consul-Token wire-auth is resolved (see
-		// proxy.go). While disabled this is terminal — we never forward to Consul.
-		if s.proxyEnabled() {
-			// TODO(proxy wire-auth): forward un-migrated reads to Consul here.
-			s.log.Warn("proxy_to_consul is enabled but the proxy leg is not implemented; treating unknown tenant as unauthorized")
-		}
+		// A project is served exactly when its tenant row exists (provisioned via
+		// UpsertTenant); an unknown token is terminal.
 		return scope{}, &authError{status: http.StatusUnauthorized, msg: "unknown token"}
 	}
 	if status != "active" {

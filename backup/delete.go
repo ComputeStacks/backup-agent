@@ -1,36 +1,34 @@
 package backup
 
 import (
+	"context"
 	"cs-agent/backup/borg"
-	"cs-agent/csevent"
+	"cs-agent/store"
 	"cs-agent/types"
 	"errors"
 	"os"
 	"strings"
 
 	"github.com/getsentry/sentry-go"
-	consulAPI "github.com/hashicorp/consul/api"
 )
 
-func DeleteBackup(consul *consulAPI.Client, job *types.Job) error {
+func DeleteBackup(ctx context.Context, st *store.Store, task store.Task, projectEvent *progress) error {
 	hostname, _ := os.Hostname()
-	kv := consul.KV()
-	opts := &consulAPI.QueryOptions{RequireConsistent: true}
-	data, _, err := kv.Get("volumes/"+job.VolumeName, opts)
+	params := parseParams(task)
+
+	v, found, err := st.GetVolume(ctx, task.Volume)
 	if err != nil {
-		backupLogger().Warn("Error loading consul", "function", "DeleteBackup()", "error", err.Error())
+		backupLogger().Warn("Error loading volume from store", "function", "DeleteBackup()", "error", err.Error())
 		return err
 	}
-
-	if data == nil {
-		backupLogger().Info("Missing volume", "function", "DeleteBackup()", "error", "No data")
+	if !found {
+		backupLogger().Info("Missing volume", "function", "DeleteBackup()", "volume", task.Volume)
 		return nil
 	}
 
-	vol, err := types.LoadVolume(data.Value)
-
+	vol, err := types.LoadVolume(v.Config)
 	if err != nil {
-		backupLogger().Warn("Fatal error parsing volume from consul data", "volume", data.Value, "error", err.Error())
+		backupLogger().Warn("Fatal error parsing volume", "volume", task.Volume, "error", err.Error())
 		sentry.CaptureException(err)
 		return err
 	}
@@ -40,9 +38,7 @@ func DeleteBackup(consul *consulAPI.Client, job *types.Job) error {
 		return nil
 	}
 
-	projectEvent := csevent.New(vol.ProjectID, []int{vol.ID}, "agent-1105683bb0f948c0", "backup.delete", job.AuditID)
-
-	repo, findRepoErr := borg.FindRepository(&types.Volume{Name: job.VolumeName}, &types.Volume{Name: job.SourceVolumeName})
+	repo, findRepoErr := borg.FindRepository(st, &types.Volume{Name: task.Volume}, &types.Volume{Name: params.SourceVolume})
 
 	if findRepoErr != nil {
 		projectEvent.EventLog.Status = "failed"
@@ -51,19 +47,17 @@ func DeleteBackup(consul *consulAPI.Client, job *types.Job) error {
 		} else {
 			projectEvent.PostEventUpdate("agent-55f82aabccdb8643", findRepoErr.Message)
 		}
-		projectEvent.CloseEvent()
-		backupLogger().Warn("Failed to find repository", "name", job.VolumeName, "archive", job.ArchiveName, "function", "DeleteBackup", "error", findRepoErr.Message)
+		backupLogger().Warn("Failed to find repository", "name", task.Volume, "archive", task.Archive, "function", "DeleteBackup", "error", findRepoErr.Message)
 		return errors.New("(" + findRepoErr.MsgID + ") " + findRepoErr.Message)
 	}
 
-	archive, findArchiveErr := repo.FindArchive(job.ArchiveName)
+	archive, findArchiveErr := repo.FindArchive(task.Archive)
 
 	if findArchiveErr != nil {
 		backupLogger().Warn("Error deleting repository", "volume", vol.Name, "response", findArchiveErr.Message)
 		repo.StopContainer()
 		projectEvent.EventLog.Status = "failed"
 		projectEvent.PostEventUpdate("agent-e67edd61abe38301", findArchiveErr.ToYaml())
-		projectEvent.CloseEvent()
 		return errors.New("(" + findArchiveErr.MsgID + ") " + findArchiveErr.Message)
 	}
 
@@ -74,7 +68,6 @@ func DeleteBackup(consul *consulAPI.Client, job *types.Job) error {
 		backupLogger().Warn("Error deleting archive", "volume", vol.Name, "archive", archive.Name, "response", deleteArchiveErr.Message)
 		projectEvent.EventLog.Status = "failed"
 		projectEvent.PostEventUpdate("agent-a7ae639c559b3088", deleteArchiveErr.ToYaml())
-		projectEvent.CloseEvent()
 		return errors.New("(" + deleteArchiveErr.MsgID + ") " + deleteArchiveErr.Message)
 	}
 
@@ -83,6 +76,5 @@ func DeleteBackup(consul *consulAPI.Client, job *types.Job) error {
 		output = append(output, o.Message)
 	}
 	projectEvent.PostEventUpdate("agent-8f8a9488ed4106f4", strings.Join(output, "\n"))
-	projectEvent.CloseEvent()
 	return nil
 }

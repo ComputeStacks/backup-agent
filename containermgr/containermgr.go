@@ -3,11 +3,9 @@ package containermgr
 import (
 	"bytes"
 	"context"
-	"cs-agent/csevent"
 	"errors"
 	"github.com/docker/docker/api/types/container"
 	"io"
-	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -93,7 +91,7 @@ func FindAllByService(cli *client.Client, serviceID string, allowOff bool) (cont
 }
 
 // Helper to exec inside a container when you don't specifically know the container ID
-func ServiceExec(serviceID string, jobCommands []string, event *csevent.ProjectEvent) (int, string, error) {
+func ServiceExec(serviceID string, jobCommands []string) (int, string, error) {
 	cli, err := client.NewClientWithOpts(client.WithVersion(viper.GetString("docker.version")))
 	if err != nil {
 		return 1, "", err
@@ -102,10 +100,9 @@ func ServiceExec(serviceID string, jobCommands []string, event *csevent.ProjectE
 	c, err := FindByService(cli, serviceID, false)
 
 	if err != nil {
-		go event.PostEventUpdate("agent-9ae526db94f38e41", "Failed to locate running container")
 		return 1, "", err
 	}
-	return c.Exec(jobCommands, event)
+	return c.Exec(jobCommands)
 }
 
 func (c *Container) Stop() bool {
@@ -179,7 +176,7 @@ func (c *Container) Start() bool {
 	return isStarted
 }
 
-func (c *Container) Exec(jobCommands []string, event *csevent.ProjectEvent) (exitCode int, response string, err error) {
+func (c *Container) Exec(jobCommands []string) (exitCode int, response string, err error) {
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.WithVersion(viper.GetString("docker.version")))
 	if err != nil {
@@ -235,10 +232,6 @@ func (c *Container) Exec(jobCommands []string, event *csevent.ProjectEvent) (exi
 	buf := new(bytes.Buffer)
 	_, _ = buf.ReadFrom(resp.Reader)
 	s := buf.String()
-
-	if !reflect.ValueOf(event).IsNil() {
-		go event.PostEventUpdate("agent-53a6ba4b3dc92e0f", s)
-	}
 
 	respStatus, err := cli.ContainerExecInspect(ctx, execResponse.ID)
 

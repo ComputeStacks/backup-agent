@@ -3,7 +3,6 @@ package backup
 import (
 	"cs-agent/backup/borg"
 	"cs-agent/containermgr"
-	"cs-agent/csevent"
 	"cs-agent/types"
 	"strconv"
 	"strings"
@@ -12,7 +11,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-func preBackupMysql(vol *types.Volume, event *csevent.ProjectEvent) bool {
+func preBackupMysql(vol *types.Volume, event *progress) bool {
 
 	// First, locate a running container
 	cli, err := client.NewClientWithOpts(client.WithVersion(viper.GetString("docker.version")))
@@ -60,14 +59,14 @@ func preBackupMysql(vol *types.Volume, event *csevent.ProjectEvent) bool {
 	return prepareMysqlBackup(container, mysqlMaster, event)
 }
 
-func postBackupMysql(event *csevent.ProjectEvent, repo *borg.Repository) bool {
+func postBackupMysql(event *progress, repo *borg.Repository) bool {
 
 	var postBackupCmd []string
 	var execCmd []string
 	postBackupCmd = append(postBackupCmd, "rm -rf", "/mnt/data/backups")
 	execCmd = append(execCmd, "sh", "-c", strings.Join(postBackupCmd, " "))
 
-	exitCode, _, err := repo.Container.Exec(execCmd, event)
+	exitCode, _, err := repo.Container.Exec(execCmd)
 
 	if err != nil {
 		go event.PostEventUpdate("agent-eb2b4ef10b08d3d5", err.Error())
@@ -82,7 +81,7 @@ func postBackupMysql(event *csevent.ProjectEvent, repo *borg.Repository) bool {
 */
 
 // Determine if MariaDB / MySQL is ready to perform a backup
-func isMysqlReady(backupContainer *containermgr.Container, mysqlMaster *MysqlInstance, event *csevent.ProjectEvent) bool {
+func isMysqlReady(backupContainer *containermgr.Container, mysqlMaster *MysqlInstance, event *progress) bool {
 	var readyCmd []string
 	var execCmd []string
 	mysqlBinary := "mysql"
@@ -98,7 +97,7 @@ func isMysqlReady(backupContainer *containermgr.Container, mysqlMaster *MysqlIns
 
 	execCmd = append(execCmd, "bash", "-c", strings.Join(readyCmd, " "))
 
-	exitCode, _, err := backupContainer.Exec(execCmd, event)
+	exitCode, _, err := backupContainer.Exec(execCmd)
 
 	if err != nil {
 		backupLogger().Warn("Failed to create backup container exec", "error", err.Error())
@@ -115,7 +114,7 @@ func isMysqlReady(backupContainer *containermgr.Container, mysqlMaster *MysqlIns
 	return true
 }
 
-func backupMysql(backupContainer *containermgr.Container, mysqlMaster *MysqlInstance, event *csevent.ProjectEvent) bool {
+func backupMysql(backupContainer *containermgr.Container, mysqlMaster *MysqlInstance, event *progress) bool {
 	var backupCmd []string
 
 	backupBinary := "xtrabackup"
@@ -146,7 +145,7 @@ func backupMysql(backupContainer *containermgr.Container, mysqlMaster *MysqlInst
 		backupCmd = append(backupCmd, "--kill-long-queries-timeout="+mariaLongTimeout)
 	}
 
-	exitCode, _, err := backupContainer.Exec(backupCmd, event)
+	exitCode, _, err := backupContainer.Exec(backupCmd)
 
 	if err != nil {
 		backupLogger().Warn("Failed to run backupMysql", "error", err.Error())
@@ -163,7 +162,7 @@ func backupMysql(backupContainer *containermgr.Container, mysqlMaster *MysqlInst
 	return true
 }
 
-func prepareMysqlBackup(backupContainer *containermgr.Container, mysqlMaster *MysqlInstance, event *csevent.ProjectEvent) bool {
+func prepareMysqlBackup(backupContainer *containermgr.Container, mysqlMaster *MysqlInstance, event *progress) bool {
 	var backupPrepareCmd []string
 
 	backupBinary := "xtrabackup"
@@ -178,7 +177,7 @@ func prepareMysqlBackup(backupContainer *containermgr.Container, mysqlMaster *My
 
 	backupPrepareCmd = append(backupPrepareCmd, backupBinary, "--prepare", "--target-dir="+mysqlMaster.DataPath+"/backups")
 
-	exitCode, _, err := backupContainer.Exec(backupPrepareCmd, event)
+	exitCode, _, err := backupContainer.Exec(backupPrepareCmd)
 
 	if err != nil {
 		backupLogger().Warn("Failed to run prepareMysqlBackup", "error", err.Error())

@@ -4,11 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"cs-agent/backup/borg"
-	"cs-agent/csevent"
 	"cs-agent/s3upload"
+	"cs-agent/store"
 	"cs-agent/types"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -17,22 +16,11 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
-	consulAPI "github.com/hashicorp/consul/api"
 	"github.com/spf13/viper"
 )
 
-// Event codes for the backup-export operation.
-//
-// PLACEHOLDER: exportEventCode is the operation code ComputeStacks must
-// pre-create the EventLog with (it matches the agent's status callback by
-// audit_id + this code). The ComputeStacks side MUST be configured with the
-// same value. exportDetailFailed labels the failure-detail PATCH and is
-// agent-internal.
-const (
-	exportEventCode    = "agent-e7c1a9d4b6f20835"
-	exportDetailFailed = "agent-3f8b2c1e7a9d4056"
-	exportEventLocale  = "volume.download"
-)
+// exportDetailFailed labels the failure-detail line in the task result output.
+const exportDetailFailed = "agent-3f8b2c1e7a9d4056"
 
 // exportArchiveSuffix returns the object-key extension for an export, derived
 // from the configured borg --tar-filter so the published filename matches the
@@ -63,85 +51,56 @@ func exportArchiveSuffix() string {
 
 var objectKeyUnsafe = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
 
-// ExportBackup streams a chosen archive to S3 and publishes a presigned GET URL
-// to borg/exports/<volume>/<jid> for ComputeStacks to read. The EventLog status
-// (running -> completed/failed) is the readiness gate; the URL travels via KV.
+// ExportBackup streams a chosen archive to S3 and, on success, records the
+// presigned GET URL + size/expiry in the task result (result_json) for the
+// controller to read — there is no separate KV download record anymore. The task
+// status (completed/failed) is the readiness gate.
 //
 // Runs under the per-repo lock so a compact never rewrites segments mid-stream.
 // The borg export uses --bypass-lock, so scheduled backups (create) are never
 // blocked. A presigned URL is published ONLY when both the borg export exited 0
-// and the upload succeeded.
-func ExportBackup(consul *consulAPI.Client, job *types.Job) {
+// and the upload succeeded. A crashed export is left "running" by the worker and
+// failed by the boot crash-reconcile — never blindly re-run.
+func ExportBackup(ctx context.Context, st *store.Store, task store.Task, projectEvent *progress) error {
 	defer sentry.Recover()
 	hostname, _ := os.Hostname()
-	kv := consul.KV()
-	opts := &consulAPI.QueryOptions{RequireConsistent: true}
-	jid := strings.TrimPrefix(job.ID, "jobs/")
 
-	data, _, err := kv.Get("volumes/"+job.VolumeName, opts)
+	v, found, err := st.GetVolume(ctx, task.Volume)
 	if err != nil {
-		backupLogger().Warn("Export: error loading volume from consul", "volume", job.VolumeName, "error", err.Error())
+		backupLogger().Warn("Export: error loading volume from store", "volume", task.Volume, "error", err.Error())
 		sentry.CaptureException(err)
-		return
+		return err
 	}
-	if data == nil {
-		backupLogger().Warn("Export: skipping unknown volume", "volume", job.VolumeName)
-		saveDownload(borg.DownloadKey(job.VolumeName, jid), &borg.ConsulDownload{
-			Status: borg.DownloadStatusFailed, Error: "unknown volume", UpdatedAt: nowUnix(),
-		})
-		return
+	if !found {
+		return failExport(projectEvent, "unknown volume")
 	}
-	vol, err := types.LoadVolume(data.Value)
+	vol, err := types.LoadVolume(v.Config)
 	if err != nil {
-		backupLogger().Warn("Export: error parsing volume", "volume", job.VolumeName, "error", err.Error())
+		backupLogger().Warn("Export: error parsing volume", "volume", task.Volume, "error", err.Error())
 		sentry.CaptureException(err)
-		return
+		return err
 	}
 	if vol.Node != hostname {
-		backupLogger().Info("Export: skipping volume not under my control", "volume", job.VolumeName)
-		saveDownload(borg.DownloadKey(vol.Name, jid), &borg.ConsulDownload{
-			Status: borg.DownloadStatusFailed, Error: "volume is not assigned to this node", UpdatedAt: nowUnix(),
-		})
-		return
+		return failExport(projectEvent, "volume is not assigned to this node")
 	}
 
-	dlKey := borg.DownloadKey(vol.Name, jid)
+	params := parseParams(task)
 
-	projectEvent := csevent.New(vol.ProjectID, []int{vol.ID}, exportEventCode, exportEventLocale, job.AuditID)
-	defer func() {
-		if projectEvent != nil {
-			projectEvent.CloseEvent() // promotes a still-"running" event to "completed"
-		}
-	}()
-
-	saveDownload(dlKey, &borg.ConsulDownload{Status: borg.DownloadStatusRunning, UpdatedAt: nowUnix()})
-
-	// Safety net: if we leave this function with the record still "running" — a
-	// recovered panic, or a terminal write that failed to reach Consul — flip it
-	// to failed so the UI doesn't show a perpetual spinner. Registered here so it
-	// only guards once a running record exists, and (by LIFO) it runs before the
-	// sentry.Recover defer during panic unwinding.
-	defer finalizeStuckExport(consul.KV(), dlKey)
-
-	// S3 destination (credentials are node-local config, never from the job).
+	// S3 destination (credentials are node-local config, never from the task).
 	s3cfg := s3upload.ConfigFromViper()
 	if !s3cfg.Enabled() {
-		failExport(projectEvent, dlKey, "backup export is not configured (no S3 bucket)")
-		return
+		return failExport(projectEvent, "backup export is not configured (no S3 bucket)")
 	}
 	if cfgErr := s3cfg.Validate(0); cfgErr != nil {
-		failExport(projectEvent, dlKey, cfgErr.Error())
-		return
+		return failExport(projectEvent, cfgErr.Error())
 	}
 	uploader, err := s3upload.New(s3cfg)
 	if err != nil {
-		failExport(projectEvent, dlKey, "s3 init: "+err.Error())
-		return
+		return failExport(projectEvent, "s3 init: "+err.Error())
 	}
 
 	// Bound the whole export so a hung borg or a stalled S3 endpoint can't hold
 	// the per-repo lock or the export worker forever.
-	ctx := context.Background()
 	if t := viper.GetInt("backups.export.timeout_sec"); t > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(t)*time.Second)
@@ -151,20 +110,18 @@ func ExportBackup(consul *consulAPI.Client, job *types.Job) {
 	// Serialize against compact/prune of the same repo for the whole stream.
 	defer borg.AcquireRepoLock(vol.Name)()
 
-	repo, findErr := borg.FindRepository(&vol, &vol)
+	repo, findErr := borg.FindRepository(st, &vol, &vol)
 	if findErr != nil {
-		failExport(projectEvent, dlKey, "find repository: "+findErr.Message)
-		return
+		return failExport(projectEvent, "find repository: "+findErr.Message)
 	}
-	archive, archErr := repo.FindArchive(job.ArchiveName)
+	archive, archErr := repo.FindArchive(task.Archive)
 	if archErr != nil {
 		repo.StopContainer()
-		failExport(projectEvent, dlKey, "find archive: "+archErr.Message)
-		return
+		return failExport(projectEvent, "find archive: "+archErr.Message)
 	}
 
-	objectKey := jid + "/" + randomToken() + "/" +
-		sanitizeKeySegment(vol.Name) + "-" + sanitizeKeySegment(job.ArchiveName) + exportArchiveSuffix()
+	objectKey := task.ID + "/" + randomToken() + "/" +
+		sanitizeKeySegment(vol.Name) + "-" + sanitizeKeySegment(task.Archive) + exportArchiveSuffix()
 
 	// Stream: borg export-tar (producer) -> io.Pipe -> S3 multipart upload.
 	pr, pw := io.Pipe()
@@ -193,118 +150,30 @@ func ExportBackup(consul *consulAPI.Client, job *types.Job) {
 
 	// Publish a URL ONLY if borg exited 0 AND the upload succeeded.
 	if exportLog != nil {
-		failExport(projectEvent, dlKey, "export collided with a concurrent repo write or borg failed (retry): "+exportLog.Message)
-		return
+		return failExport(projectEvent, "export collided with a concurrent repo write or borg failed (retry): "+exportLog.Message)
 	}
 	if upErr != nil {
-		failExport(projectEvent, dlKey, "upload failed: "+upErr.Error())
-		return
+		return failExport(projectEvent, "upload failed: "+upErr.Error())
 	}
 
-	url, expiry, psErr := uploader.PresignGet(ctx, objectKey, time.Duration(job.DownloadTTL)*time.Second)
+	url, expiry, psErr := uploader.PresignGet(ctx, objectKey, time.Duration(params.DownloadTTL)*time.Second)
 	if psErr != nil {
-		failExport(projectEvent, dlKey, "presign failed: "+psErr.Error())
-		return
+		return failExport(projectEvent, "presign failed: "+psErr.Error())
 	}
 
-	saveDownload(dlKey, &borg.ConsulDownload{
-		Status:    borg.DownloadStatusCompleted,
-		URL:       url,
-		ObjectKey: s3cfg.Prefix + objectKey,
-		Size:      size,
-		Expiry:    expiry.Unix(),
-		UpdatedAt: nowUnix(),
-	})
-	backupLogger().Info("Completed backup export", "volume", vol.Name, "archive", job.ArchiveName, "size", size)
-	// projectEvent is promoted running -> completed by the deferred CloseEvent.
+	projectEvent.Set("url", url)
+	projectEvent.Set("object_key", s3cfg.Prefix+objectKey)
+	projectEvent.Set("size", size)
+	projectEvent.Set("expiry", expiry.Unix())
+	backupLogger().Info("Completed backup export", "volume", vol.Name, "archive", task.Archive, "size", size)
+	return nil
 }
 
-// ReconcileOrphanedExports marks any export record still "running" for a volume
-// this node owns as "failed". On boot no export is in flight yet, so a lingering
-// "running" record is necessarily orphaned by a crash/restart mid-stream. The
-// owner check avoids clobbering an export legitimately running on another node.
-func ReconcileOrphanedExports(consul *consulAPI.Client) {
-	defer sentry.Recover()
-	hostname, _ := os.Hostname()
-	downloads, err := borg.ListDownloads()
-	if err != nil {
-		backupLogger().Warn("Export reconcile: could not list exports", "error", err.Error())
-		return
-	}
-	for key, d := range downloads {
-		if d.Status != borg.DownloadStatusRunning {
-			continue
-		}
-		volume := borg.DownloadVolumeFromKey(key)
-		if volume == "" {
-			continue
-		}
-		vdata, _, vErr := consul.KV().Get("volumes/"+volume, nil)
-		if vErr != nil || vdata == nil {
-			continue
-		}
-		v, vlErr := types.LoadVolume(vdata.Value)
-		if vlErr != nil || v.Node != hostname {
-			continue // not ours; leave it alone
-		}
-		backupLogger().Warn("Export reconcile: marking orphaned export failed", "key", key)
-		d.Status = borg.DownloadStatusFailed
-		d.Error = "agent restarted during export; please retry"
-		d.UpdatedAt = nowUnix()
-		if saveErr := d.Save(key); saveErr != nil {
-			backupLogger().Warn("Export reconcile: failed to update record", "key", key, "error", saveErr.Error())
-		}
-		// Drop the orphaned job so it isn't auto-re-run (no blind 50GB resume);
-		// the user re-requests if they still want the download.
-		if oj := borg.DownloadJidFromKey(key); oj != "" {
-			if _, delErr := consul.KV().Delete("jobs/"+oj, nil); delErr != nil {
-				backupLogger().Warn("Export reconcile: failed to delete orphaned job", "jid", oj, "error", delErr.Error())
-			}
-		}
-	}
-}
-
-func failExport(event *csevent.ProjectEvent, dlKey, msg string) {
+func failExport(p *progress, msg string) error {
 	backupLogger().Warn("Backup export failed", "error", msg)
-	saveDownload(dlKey, &borg.ConsulDownload{Status: borg.DownloadStatusFailed, Error: msg, UpdatedAt: nowUnix()})
-	if event != nil {
-		event.EventLog.Status = "failed"
-		event.PostEventUpdate(exportDetailFailed, msg)
-	}
-}
-
-func saveDownload(key string, d *borg.ConsulDownload) {
-	if err := d.Save(key); err != nil {
-		backupLogger().Warn("Export: failed to write download record", "key", key, "error", err.Error())
-		sentry.CaptureException(err)
-	}
-}
-
-func nowUnix() int64 { return time.Now().Unix() }
-
-// finalizeStuckExport flips a still-"running" record to failed. Deferred from
-// ExportBackup so an export that exits without durably recording a terminal
-// state doesn't leave a perpetual "running" record. That happens on a recovered
-// panic, or if the success/failure write itself failed to reach Consul
-// (saveDownload/putDownload log-and-swallow write errors) — in both cases
-// failed+retry is the correct outcome. Safe with no CAS: the export goroutine is
-// the sole writer of this record and this runs as that goroutine exits, so there
-// is no concurrent writer. The read is consistent so follower lag can't misread a
-// just-written "completed" as "running" and clobber a genuinely-successful export.
-func finalizeStuckExport(consul types.ConsulKV, dlKey string) {
-	pair, _, err := consul.Get(dlKey, &consulAPI.QueryOptions{RequireConsistent: true})
-	if err != nil || pair == nil {
-		return
-	}
-	var d borg.ConsulDownload
-	if json.Unmarshal(pair.Value, &d) != nil || d.Status != borg.DownloadStatusRunning {
-		return
-	}
-	putDownload(consul, dlKey, &borg.ConsulDownload{
-		Status:    borg.DownloadStatusFailed,
-		Error:     "export interrupted unexpectedly; please retry",
-		UpdatedAt: nowUnix(),
-	})
+	p.EventLog.Status = "failed"
+	p.PostEventUpdate(exportDetailFailed, msg)
+	return errors.New(msg)
 }
 
 func randomToken() string {

@@ -1,64 +1,57 @@
 /*
 *
-Cron scheduling and setup for Volume Backups
+Volume backup execution.
 */
 package backup
 
 import (
+	"context"
 	"cs-agent/backup/borg"
-	"cs-agent/csevent"
+	"cs-agent/store"
 	"cs-agent/types"
 	"errors"
-	"github.com/spf13/viper"
 	"os"
 	"time"
 
 	"github.com/getsentry/sentry-go"
-	consulAPI "github.com/hashicorp/consul/api"
+
+	"github.com/spf13/viper"
 )
 
-func Perform(consul *consulAPI.Client, job *types.Job) error {
+// Perform runs a volume.backup task: create a borg archive of the volume and, on
+// success, record the backup time in the task result (the controller reads
+// last_backup from the completed task's result_json — there is no volumes
+// writeback). Soft failures are reported via projectEvent.EventLog.Status; the
+// worker marks the task failed and stores the accumulated output.
+func Perform(ctx context.Context, st *store.Store, task store.Task, projectEvent *progress) error {
 	defer sentry.Recover()
 	hostname, _ := os.Hostname()
-	kv := consul.KV()
-	opts := &consulAPI.QueryOptions{RequireConsistent: true}
-	data, _, err := kv.Get("volumes/"+job.VolumeName, opts)
+
+	v, found, err := st.GetVolume(ctx, task.Volume)
 	if err != nil {
-		backupLogger().Warn("Fatal error loading volume from consul", "volume", job.VolumeName, "error", err.Error())
+		backupLogger().Warn("Fatal error loading volume from store", "volume", task.Volume, "error", err.Error())
 		sentry.CaptureException(err)
 		return err
 	}
-
-	if data == nil {
-		backupLogger().Warn("Skipping backup job for unknown volume", "volume", job.VolumeName)
+	if !found {
+		backupLogger().Warn("Skipping backup job for unknown volume", "volume", task.Volume)
 		return nil
 	}
-	backupLogger().Info("Performing volume backup", "volume", job.VolumeName)
-	vol, err := types.LoadVolume(data.Value)
-
+	vol, err := types.LoadVolume(v.Config)
 	if err != nil {
-		backupLogger().Warn("Fatal error loading volume", "volume", data.Value, "error", err.Error())
+		backupLogger().Warn("Fatal error loading volume", "volume", task.Volume, "error", err.Error())
 		sentry.CaptureException(err)
 		return err
 	}
 
 	if vol.Node != hostname {
-		backupLogger().Info("Skipping backup job for volume not under my control", "volume", job.VolumeName)
+		backupLogger().Info("Skipping backup job for volume not under my control", "volume", task.Volume)
 		return nil
 	}
 
-	backupLogger().Info("Backing up volume", "volume", job.VolumeName)
-	volumeIds := []int{vol.ID}
-	backupLogger().Info("Building project event", "volume", vol.Name, "project", vol.ProjectID)
-	projectEvent := csevent.New(vol.ProjectID, volumeIds, "agent-ad28e9aa1933495f", "volume.backup", job.AuditID)
+	backupLogger().Info("Backing up volume", "volume", task.Volume)
 
-	defer func() {
-		if projectEvent != nil {
-			projectEvent.CloseEvent()
-		}
-	}()
-
-	repo, findRepoMsg := borg.FindRepository(&vol, &vol)
+	repo, findRepoMsg := borg.FindRepository(st, &vol, &vol)
 
 	defer func() {
 		// Stop borg container
@@ -69,38 +62,33 @@ func Perform(consul *consulAPI.Client, job *types.Job) error {
 
 	if findRepoMsg != nil {
 		if findRepoMsg.MsgID == "Repository.DoesNotExist" {
-			repo = &borg.Repository{Name: vol.Name}
+			repo = &borg.Repository{Name: vol.Name, Store: st}
 			// Build backup container
 			repoErr := repo.Setup(&vol, &vol)
-			if repoErr != nil && projectEvent != nil {
+			if repoErr != nil {
 				projectEvent.EventLog.Status = "failed"
 				projectEvent.PostEventUpdate("agent-d4c34f1d89c20aa6", repoErr.ToYaml())
-				projectEvent.CloseEvent()
 				return errors.New(repoErr.Message)
 			}
 		} else if findRepoMsg.MsgID == "InvalidRepository" && viper.GetBool("backups.borg.ssh.enabled") {
 			// Empty SSH repos return 'InvalidRepository' rather than 'DoesNotExist'.
-			repo = &borg.Repository{Name: vol.Name}
+			repo = &borg.Repository{Name: vol.Name, Store: st}
 			// Build backup container
 			repoErr := repo.Setup(&vol, &vol)
-			if repoErr != nil && projectEvent != nil {
+			if repoErr != nil {
 				projectEvent.EventLog.Status = "failed"
 				projectEvent.PostEventUpdate("agent-7fad20a06cbd26a2", repoErr.ToYaml())
-				projectEvent.CloseEvent()
 				return errors.New(repoErr.Message)
 			}
 		} else {
-			if projectEvent != nil {
-				projectEvent.EventLog.Status = "failed"
-				projectEvent.PostEventUpdate("agent-c4087f229d50d4dc", findRepoMsg.ToYaml())
-				projectEvent.CloseEvent()
-			}
+			projectEvent.EventLog.Status = "failed"
+			projectEvent.PostEventUpdate("agent-c4087f229d50d4dc", findRepoMsg.ToYaml())
 			return errors.New("(" + findRepoMsg.MsgID + ") " + findRepoMsg.Message)
 		}
 	}
 
 	archive := borg.Archive{
-		Name:       job.ArchiveName,
+		Name:       task.Archive,
 		Repository: repo,
 	}
 
@@ -111,28 +99,22 @@ func Perform(consul *consulAPI.Client, job *types.Job) error {
 	if preBackupSuccess {
 		archiveMsg, archiveErr := archive.Create()
 		if archiveErr != nil {
-			if projectEvent != nil {
-				projectEvent.PostEventUpdate("agent-d894f86c71d0db7b", archiveErr.ToYaml())
-				if projectEvent.EventLog.Status == "running" {
-					projectEvent.EventLog.Status = "failed"
-				}
+			projectEvent.PostEventUpdate("agent-d894f86c71d0db7b", archiveErr.ToYaml())
+			if projectEvent.EventLog.Status == "running" {
+				projectEvent.EventLog.Status = "failed"
 			}
 
 			if vol.RestoreContinueOnError {
 				postBackup(&vol, projectEvent, repo)
 			}
 		} else {
-			if projectEvent != nil {
-				projectEvent.PostEventUpdate("agent-566dd010f637861e", archiveMsg.ToYaml())
-			}
+			projectEvent.PostEventUpdate("agent-566dd010f637861e", archiveMsg.ToYaml())
 			postBackup(&vol, projectEvent, repo)
 			backupSucceeded = true
 		}
 	} else {
-		if projectEvent != nil {
-			if projectEvent.EventLog.Status == "running" {
-				projectEvent.EventLog.Status = "failed"
-			}
+		if projectEvent.EventLog.Status == "running" {
+			projectEvent.EventLog.Status = "failed"
 		}
 
 		if vol.BackupContinueOnError {
@@ -140,22 +122,14 @@ func Perform(consul *consulAPI.Client, job *types.Job) error {
 		}
 	}
 
-	// Only advance LastBackup on a successful archive creation. Advancing it on
-	// failure masks missed backups in ComputeStacks, which reads LastBackup to
-	// decide whether a volume is overdue. LastBackup is the only persistent
-	// field mutated here, so on failure there is nothing to write back.
+	// Only advance last_backup on a successful archive creation. On failure the
+	// task is marked failed (via EventLog.Status) and carries no last_backup, so
+	// the controller — which reads last_backup from the completed task result —
+	// correctly sees the volume as still overdue.
 	if !backupSucceeded {
 		return nil
 	}
 
-	vol.LastBackup = int64(time.Now().Unix())
-	data.Value = vol.JSONEncode()
-	_, kvError := kv.Put(data, nil)
-	if kvError != nil {
-		backupLogger().Warn("Fatal error loading volume", "volume", vol.Name, "error", kvError.Error())
-		sentry.CaptureException(kvError)
-		return kvError
-	}
+	projectEvent.Set("last_backup", time.Now().Unix())
 	return nil
-
 }

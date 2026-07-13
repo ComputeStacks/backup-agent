@@ -3,7 +3,6 @@ package backup
 import (
 	"context"
 	"cs-agent/containermgr"
-	"cs-agent/csevent"
 	"cs-agent/types"
 	"errors"
 	"github.com/coreos/go-semver/semver"
@@ -38,14 +37,14 @@ type MysqlInstance struct {
 	Group        string // Linux group who should own th data
 }
 
-func loadMysqlMaster(cli *client.Client, serviceID string, event *csevent.ProjectEvent, allowOff bool) (*MysqlInstance, error) {
+func loadMysqlMaster(cli *client.Client, serviceID string, event *progress, allowOff bool) (*MysqlInstance, error) {
 	ctx := context.Background()
 	mysqlFoundContainer, err := containermgr.FindByService(cli, serviceID, allowOff)
 
 	if err != nil {
 		backupLogger().Warn("Failed to load MySQL Master", "error", err.Error(), "function", "loadMysqlMaster", "action", "FindRunningContainer", "serviceID", serviceID)
 		if event != nil {
-			go event.PostEventUpdate("agent-6e0d0cbb268ac0b1", "Container appears to be offline. Unable to perform"+" "+event.EventLog.Locale)
+			go event.PostEventUpdate("agent-6e0d0cbb268ac0b1", "Container appears to be offline. Unable to perform backup.")
 			event.EventLog.Status = "cancelled"
 		}
 		return &MysqlInstance{}, err
@@ -121,7 +120,7 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *csevent.Projec
 	if versionStage == "" {
 		backupLogger().Warn("Failed to identify MySQL Version", "error", "version string is blank", "function", "loadMysqlMaster", "serviceID", serviceID)
 		if event != nil {
-			go event.PostEventUpdate("agent-f422717152297b23", "Unable to load MySQL Version, halting job. "+" "+event.EventLog.Locale)
+			go event.PostEventUpdate("agent-f422717152297b23", "Unable to load MySQL Version, halting job.")
 			event.EventLog.Status = "failed"
 		}
 		return &instance, errors.New("missing version string")

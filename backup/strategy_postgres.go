@@ -3,14 +3,14 @@ package backup
 import (
 	"cs-agent/backup/borg"
 	"cs-agent/containermgr"
-	"cs-agent/csevent"
 	"cs-agent/types"
+	"strconv"
+
 	"github.com/docker/docker/client"
 	"github.com/spf13/viper"
-	"strconv"
 )
 
-func preBackupPostgres(vol *types.Volume, event *csevent.ProjectEvent) (preBackupPostgresSuccess bool) {
+func preBackupPostgres(vol *types.Volume, event *progress) (preBackupPostgresSuccess bool) {
 	cli, err := client.NewClientWithOpts(client.WithVersion(viper.GetString("docker.version")))
 	if err != nil {
 		backupLogger().Warn("Docker error preBackupPostgres", "error", err.Error())
@@ -23,7 +23,7 @@ func preBackupPostgres(vol *types.Volume, event *csevent.ProjectEvent) (preBacku
 	if err != nil {
 		return true
 	}
-	exitCode, _, err := c.Exec([]string{"psql", "-U", "postgres", "-c", "checkpoint;"}, event)
+	exitCode, _, err := c.Exec([]string{"psql", "-U", "postgres", "-c", "checkpoint;"})
 
 	if exitCode > 0 {
 		backupLogger().Warn("Failed to run preBackupPostgres Job", "exitCode", exitCode)
@@ -34,18 +34,18 @@ func preBackupPostgres(vol *types.Volume, event *csevent.ProjectEvent) (preBacku
 	return true
 }
 
-func postBackupPostgres(event *csevent.ProjectEvent, repo *borg.Repository) bool {
+func postBackupPostgres(event *progress, repo *borg.Repository) bool {
 	return true
 }
 
-func preRestorePostgres(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.Repository) (preRestorePostgresSuccess bool) {
+func preRestorePostgres(vol *types.Volume, event *progress, repo *borg.Repository) (preRestorePostgresSuccess bool) {
 	return true
 }
 
-func postRestorePostgres(event *csevent.ProjectEvent, repo *borg.Repository) bool {
+func postRestorePostgres(event *progress, repo *borg.Repository) bool {
 	return true
 }
 
-func rollbackRestorePostgres(event *csevent.ProjectEvent, repo *borg.Repository) bool {
+func rollbackRestorePostgres(event *progress, repo *borg.Repository) bool {
 	return true
 }

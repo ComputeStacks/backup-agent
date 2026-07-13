@@ -2,6 +2,7 @@ package borg
 
 import (
 	"cs-agent/containermgr"
+	"cs-agent/store"
 
 	"github.com/ghodss/yaml"
 )
@@ -69,6 +70,11 @@ type Repository struct {
 	Name             string
 	SourceVolumeName string
 	Container        *containermgr.Container // Track what container we're using to perform this backup
+	// Store is the control.db handle used to report observed repo state UP
+	// (size/archives) via Sync — the successor to the Consul borg/repository key.
+	// Set at construction (FindRepository / the &Repository{} literals); Sync is a
+	// no-op when nil.
+	Store *store.Store
 	//ContainerConfig        *BorgContainerConfig
 	Strategy               string   `json:"strategy"`
 	PreBackup              []string `json:"pre_backup"`

@@ -3,14 +3,13 @@ package backup
 import (
 	"cs-agent/backup/borg"
 	"cs-agent/containermgr"
-	"cs-agent/csevent"
 	"cs-agent/types"
 	"fmt"
 	"strconv"
 	"strings"
 )
 
-func preBackup(vol *types.Volume, event *csevent.ProjectEvent) (preBackupSuccess bool) {
+func preBackup(vol *types.Volume, event *progress) (preBackupSuccess bool) {
 	backupLogger().Info("Running preBackup job", "volume", vol.Name, "strategy", vol.Strategy)
 	if vol.Strategy == "" {
 		backupLogger().Debug("Strategy is blank for volume, defaulting to files.", "volume", vol.Strategy)
@@ -24,7 +23,7 @@ func preBackup(vol *types.Volume, event *csevent.ProjectEvent) (preBackupSuccess
 			}
 			return success
 		}()
-		exitCode, _, err := containermgr.ServiceExec(strconv.Itoa(vol.ServiceID), vol.PreBackup, event)
+		exitCode, _, err := containermgr.ServiceExec(strconv.Itoa(vol.ServiceID), vol.PreBackup)
 
 		if err != nil {
 			go event.PostEventUpdate("agent-ce329a15239aeb9d", err.Error())
@@ -55,7 +54,7 @@ func preBackup(vol *types.Volume, event *csevent.ProjectEvent) (preBackupSuccess
 	}
 }
 
-func postBackup(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.Repository) {
+func postBackup(vol *types.Volume, event *progress, repo *borg.Repository) {
 
 	backupLogger().Info("Running postBackup", "volume", vol.Name)
 
@@ -66,7 +65,7 @@ func postBackup(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.Repos
 				return
 			}
 		}()
-		exitCode, _, err := containermgr.ServiceExec(strconv.Itoa(vol.ServiceID), vol.PostBackup, event)
+		exitCode, _, err := containermgr.ServiceExec(strconv.Itoa(vol.ServiceID), vol.PostBackup)
 
 		if err != nil {
 			go event.PostEventUpdate("agent-ee979a773f9b7788", err.Error())

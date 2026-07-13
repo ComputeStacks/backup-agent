@@ -1,7 +1,9 @@
 package backup
 
 import (
+	"context"
 	"cs-agent/backup/borg"
+	"cs-agent/store"
 	"cs-agent/types"
 	"hash/fnv"
 	"os"
@@ -12,39 +14,31 @@ import (
 )
 
 // compact reclaims space freed by prune/delete for every repository this node
-// owns. It mirrors prune(): iterate volumes, filter to vol.Backup &&
-// vol.Node == hostname, and run borg compact under the per-repo lock so it never
-// overlaps an export of the same repo. Replaces the host-cron compactor.
-func compact(consul types.ConsulKV) {
+// owns. It reads volume desired-state from control.db, filters to
+// vol.Backup && vol.Node == hostname, and runs borg compact under the per-repo
+// lock so it never overlaps an export of the same repo.
+func compact(ctx context.Context, st *store.Store) {
 	defer sentry.Recover()
 	hostname, _ := os.Hostname()
 
 	// Per-node jitter so many nodes sharing one backup server don't all start
 	// compacting at the same cron minute. Deterministic (hostname-derived) for
-	// even spread and reproducibility. Each cron job runs in its own goroutine,
-	// so sleeping here doesn't delay other scheduled jobs.
+	// even spread and reproducibility.
 	if jitter := viper.GetInt("backups.compact_jitter_sec"); jitter > 0 {
 		time.Sleep(jitterDelay(hostname, jitter))
 	}
 
-	keys, _, err := consul.Keys("volumes", "", nil)
+	vols, err := st.ListVolumesByNode(ctx, hostname)
 	if err != nil {
-		backupLogger().Warn("Compact error getting volume list from consul", "error", err.Error())
+		backupLogger().Warn("Compact error listing volumes", "error", err.Error())
 		sentry.CaptureException(err)
 		return
 	}
 
-	for _, value := range keys {
-		pair, _, err := consul.Get(value, nil)
+	for _, sv := range vols {
+		vol, err := types.LoadVolume(sv.Config)
 		if err != nil {
-			backupLogger().Warn("Compact error getting volume from consul", "volumePath", value, "error", err.Error())
-			sentry.CaptureException(err)
-			continue
-		}
-		vol, err := types.LoadVolume(pair.Value)
-		if err != nil {
-			backupLogger().Warn("Fatal error parsing volume from consul data", "volume", pair.Value, "error", err.Error())
-			sentry.CaptureException(err)
+			backupLogger().Warn("Compact: error parsing volume", "volume", sv.Name, "error", err.Error())
 			continue
 		}
 		if vol.Backup && vol.Node == hostname {
@@ -53,7 +47,7 @@ func compact(consul types.ConsulKV) {
 			// the rest of the sweep.
 			func() {
 				defer borg.AcquireRepoLock(vol.Name)()
-				repo := borg.Repository{Name: vol.Name, SourceVolumeName: vol.Name}
+				repo := borg.Repository{Name: vol.Name, SourceVolumeName: vol.Name, Store: st}
 				if log := repo.Compact(); log != nil {
 					backupLogger().Warn("Compact Volume Error", "volume", vol.Name, "error", log.Message)
 				}

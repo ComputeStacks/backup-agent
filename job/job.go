@@ -2,188 +2,201 @@ package job
 
 import (
 	"context"
-	"cs-agent/backup"
-	"cs-agent/cnslclient"
-	"cs-agent/firewall"
 	"cs-agent/log"
-	"cs-agent/types"
+	"cs-agent/store"
 	"encoding/json"
-	"fmt"
 	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 	"time"
 
-	"github.com/spf13/viper"
-
-	"github.com/getsentry/sentry-go"
-	consulAPI "github.com/hashicorp/consul/api"
 	"github.com/hashicorp/go-hclog"
+	"github.com/spf13/viper"
 )
 
-// Watch for new jobs
-func Watch(wg *sync.WaitGroup) {
-	defer sentry.Recover()
-	defer wg.Done()
-	defer func() {
-		jobEvent().Info("Watch worker stopping")
-	}()
-	consul, err := cnslclient.Client()
-	if err != nil {
-		jobEvent().Warn("Fatal error loading consul", "error", err.Error())
-		sentry.CaptureException(err)
-		return
-	}
-	hostname, _ := os.Hostname()
+// backstopInterval is how often the dispatcher re-drains ListPendingTasks even
+// without a wake signal — a safety net for a task committed just before a missed
+// signal, or one left pending by an export revert.
+const backstopInterval = 30 * time.Second
 
-	// On boot, trigger firewall reload
-	go firewall.Perform(consul)
-
-	// Build Job Queues
-	ctx, cancel := context.WithCancel(context.Background())
-	backupWorkerCount := viper.GetInt("queue.numworkers") + 1
-	exportWorkerCount := viper.GetInt("backups.export.workers")
-	if exportWorkerCount < 1 {
-		exportWorkerCount = 1
-	}
-	backupQueue := make(chan types.Job)
-	ipTableQueue := make(chan types.Job)
-	exportQueue := make(chan types.Job)
-	setupWorkers(ctx, wg, consul, "backup", backupWorkerCount, backupQueue)
-	setupWorkers(ctx, wg, consul, "firewall", 1, ipTableQueue)
-	setupWorkers(ctx, wg, consul, "export", exportWorkerCount, exportQueue)
-	captureExit(cancel)
-
-	// On boot, before dispatching, reconcile exports left "running" by a crashed
-	// process (mark failed + drop the orphaned job so it isn't auto-re-run).
-	// Synchronous so it can't race a re-dispatch of the same job.
-	if viper.GetString("backups.export.s3.bucket") != "" {
-		backup.ReconcileOrphanedExports(consul)
-	}
-
-	kvClient := consul.KV()
-	opts := &consulAPI.QueryOptions{AllowStale: false}
-	errCount := 0
-
-	for {
-		events, meta, err := kvClient.Keys("jobs", "", opts)
-		if err != nil {
-			jobEvent().Warn("Fatal error loading job list", "error", err.Error())
-			if errCount > 12 {
-				jobEvent().Warn("Error count has reach more than 12, stopping all jobs")
-				return
-			}
-			errCount = errCount + 1
-			time.Sleep(5 * time.Second) // Wait 5 seconds
-			continue
-		}
-		errCount = 0
-		for _, value := range events {
-			data, _, err := kvClient.Get(value, nil)
-			if err != nil {
-				jobEvent().Warn("Fatal error loading job", "error", err.Error())
-				sentry.CaptureException(err)
-				continue
-			}
-			var job types.Job
-			if data == nil {
-				continue // We can get here if the data was deleted.
-			}
-			err = json.Unmarshal(data.Value, &job)
-			if err != nil {
-				jobEvent().Warn("Fatal error loading job", "jobID", data.Key, "error", err.Error())
-				sentry.CaptureException(err)
-				continue
-			}
-			job.ID = data.Key
-			if hostname == job.Node {
-				switch job.Name {
-				case "firewall":
-					ipTableQueue <- job
-					job.Close(consul.KV())
-				case "backup.export":
-					// Long-running: hand off without blocking the single dispatch
-					// goroutine, and do NOT delete the KV key here — ExportBackup
-					// deletes it on completion (processJob). Dedup so the
-					// still-present key isn't re-dispatched while in flight.
-					if markExportInFlight(job.ID) {
-						select {
-						case exportQueue <- job:
-						default:
-							// export worker busy: leave the KV key in place; it's
-							// re-dispatched on the next jobs/ change (e.g. when the
-							// busy export finishes and deletes its key)
-							clearExportInFlight(job.ID)
-						}
-					}
-				default:
-					backupQueue <- job
-					job.Close(consul.KV())
-				}
-			}
-
-		}
-		opts.WaitIndex = meta.LastIndex
-	}
-	// https://github.com/hashicorp/consul/blob/master/api/lock.go#L357-L384
+// Dispatcher is the in-process replacement for the old Consul jobs/ long-poll. A
+// SINGLE goroutine drains this node's pending tasks and dispatches each into a
+// worker pool; being single-goroutine is load-bearing — it (with the ClaimTask
+// CAS) guarantees a task is dispatched at most once even when a wake signal and
+// the backstop coincide.
+type Dispatcher struct {
+	st            *store.Store
+	hostname      string
+	backupQ       chan store.Task
+	exportQ       chan store.Task
+	signal        chan struct{}
+	backupWorkers int
+	exportWorkers int
 }
 
-func processJob(consul *consulAPI.Client, job *types.Job) {
-	defer sentry.Recover()
-	jobEvent().Info("Processing job", "job", job.ID, "kind", job.Name)
-	switch job.Name {
-	case "volume.backup":
-		resolveArchiveName(job)
-		_ = backup.Perform(consul, job)
-	case "volume.restore":
-		backup.Restore(consul, job)
-	case "backup.delete":
-		_ = backup.DeleteBackup(consul, job)
-	case "backup.export":
-		// The KV key and in-flight marker are cleared only after the export
-		// finishes. defer LIFO: Close (delete key) runs before clearing the
-		// marker, so the deleted key can't be re-dispatched in the gap.
-		func() {
-			defer clearExportInFlight(job.ID)
-			defer job.Close(consul.KV())
-			backup.ExportBackup(consul, job)
-		}()
-	case "firewall":
-		firewall.Perform(consul)
-	default:
-		jobEvent().Info("Unknown job", "name", job.Name)
+// NewDispatcher builds the dispatcher (unbuffered worker queues sized by config).
+func NewDispatcher(st *store.Store) *Dispatcher {
+	hostname, _ := os.Hostname()
+	backupWorkers := viper.GetInt("queue.numworkers") + 1
+	if backupWorkers < 1 {
+		backupWorkers = 1
 	}
+	exportWorkers := viper.GetInt("backups.export.workers")
+	if exportWorkers < 1 {
+		exportWorkers = 1
+	}
+	return &Dispatcher{
+		st:            st,
+		hostname:      hostname,
+		backupQ:       make(chan store.Task),
+		exportQ:       make(chan store.Task),
+		signal:        make(chan struct{}, 1),
+		backupWorkers: backupWorkers,
+		exportWorkers: exportWorkers,
+	}
+}
 
+// Signal wakes the dispatcher to drain pending tasks. Non-blocking + coalescing:
+// callers (the task-create HTTP handler, the scheduler) never block, and bursts
+// collapse into a single drain.
+func (d *Dispatcher) Signal() {
+	select {
+	case d.signal <- struct{}{}:
+	default:
+	}
+}
+
+// Start runs the boot crash-reconcile, starts the worker pools, and runs the
+// single dispatch loop until ctx is done. Call in its own goroutine. wg tracks
+// the worker pools + the dispatch loop so main can bound the shutdown drain.
+func (d *Dispatcher) Start(ctx context.Context, wg *sync.WaitGroup) {
+	// Fail any task left "running" by a crashed process BEFORE accepting new
+	// work, so a re-drain can't race a reconcile of the same task.
+	d.bootReconcile(ctx)
+
+	d.startWorkers(ctx, wg, "backup", d.backupWorkers, d.backupQ)
+	d.startWorkers(ctx, wg, "export", d.exportWorkers, d.exportQ)
+
+	wg.Add(1)
+	go d.loop(ctx, wg)
+}
+
+func (d *Dispatcher) startWorkers(ctx context.Context, wg *sync.WaitGroup, name string, count int, q <-chan store.Task) {
+	wg.Add(count)
+	for i := 1; i <= count; i++ {
+		jobEvent().Info("Starting worker process", "queue", name, "worker-process", i)
+		go d.worker(ctx, wg, name, q)
+	}
+}
+
+// loop is the single dispatch goroutine.
+func (d *Dispatcher) loop(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+	defer func() { jobEvent().Info("Dispatcher stopping") }()
+
+	d.drain(ctx) // drain whatever is already pending at boot
+	backstop := time.NewTicker(backstopInterval)
+	defer backstop.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-d.signal:
+			d.drain(ctx)
+		case <-backstop.C:
+			d.drain(ctx)
+		}
+	}
+}
+
+// drain claims and dispatches every pending task for this node. It is the ONLY
+// claimer/dispatcher. Exports are dispatched first (non-blocking) so a full backup
+// queue can't head-of-line-block an export; backups then send blocking (the
+// workers are the throughput limiter).
+func (d *Dispatcher) drain(ctx context.Context) {
+	pending, err := d.st.ListPendingTasks(ctx, d.hostname)
+	if err != nil {
+		jobEvent().Warn("dispatch: list pending tasks", "error", err.Error())
+		return
+	}
+	for _, task := range pending {
+		if ctx.Err() != nil {
+			return
+		}
+		if task.Name == "backup.export" {
+			d.dispatchExport(ctx, task)
+		}
+	}
+	for _, task := range pending {
+		if ctx.Err() != nil {
+			return
+		}
+		if task.Name != "backup.export" {
+			d.dispatchBackup(ctx, task)
+		}
+	}
+}
+
+// dispatchBackup claims (CAS pending->running) then blocking-sends to the backup
+// pool. Only a task we won the CAS on is dispatched, so a signal + backstop can't
+// double-run one task.
+func (d *Dispatcher) dispatchBackup(ctx context.Context, task store.Task) {
+	claimed, err := d.st.ClaimTask(ctx, task.ID)
+	if err != nil {
+		jobEvent().Warn("dispatch: claim task", "task", task.ID, "error", err.Error())
+		return
+	}
+	if !claimed {
+		return // already claimed/terminal
+	}
+	select {
+	case d.backupQ <- task:
+	case <-ctx.Done():
+	}
+}
+
+// dispatchExport claims then NON-BLOCKING sends to the export pool; if the pool is
+// full the claim is reverted (running->pending) so a later wake retries it. A
+// crash between claim and revert leaves the task running, which the boot reconcile
+// then fails — an export is never blindly re-run.
+func (d *Dispatcher) dispatchExport(ctx context.Context, task store.Task) {
+	claimed, err := d.st.ClaimTask(ctx, task.ID)
+	if err != nil {
+		jobEvent().Warn("dispatch: claim export", "task", task.ID, "error", err.Error())
+		return
+	}
+	if !claimed {
+		return
+	}
+	select {
+	case d.exportQ <- task:
+	default:
+		if _, uErr := d.st.UnclaimTask(ctx, task.ID); uErr != nil {
+			jobEvent().Warn("dispatch: unclaim export (pool full)", "task", task.ID, "error", uErr.Error())
+		}
+	}
+}
+
+// bootReconcile fails every task left "running" by a crashed process. On boot no
+// task is truly in flight, so a "running" row is orphaned work. NONE are
+// auto-replayed — destructive kinds (restore/delete/trash) must never re-run
+// unbidden, and export must never blindly re-upload; the scheduler re-fires
+// backups on their next slot; the controller re-requests the rest.
+func (d *Dispatcher) bootReconcile(ctx context.Context) {
+	running, err := d.st.ListRunningTasks(ctx, d.hostname)
+	if err != nil {
+		jobEvent().Warn("boot reconcile: list running tasks", "error", err.Error())
+		return
+	}
+	result, _ := json.Marshal(map[string]string{"error": "agent restarted while task was running; not auto-replayed"})
+	for _, task := range running {
+		if err := d.st.UpdateTaskStatus(ctx, task.ID, store.TaskFailed, result); err != nil {
+			jobEvent().Warn("boot reconcile: mark failed", "task", task.ID, "error", err.Error())
+			continue
+		}
+		jobEvent().Warn("boot reconcile: failed orphaned running task", "task", task.ID, "kind", task.Name)
+	}
 }
 
 func jobEvent() hclog.Logger {
 	return log.New().Named("worker")
-}
-
-// captureExit cancels the worker context on SIGINT/SIGTERM so the worker pools
-// drain their in-flight job and return (each calls wg.Done). It deliberately
-// does NOT call os.Exit: process teardown is owned by main, which on the same
-// signal drains the metadata HTTP server and closes the store in order. Calling
-// os.Exit here would bypass main's deferred store Close and abort an in-flight
-// HTTP drain mid-flight (it ran the defers-skipping os.Exit race this replaces).
-func captureExit(cancel context.CancelFunc) {
-	c := make(chan os.Signal, 2)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-c
-		fmt.Println("\r- Stopping workers...")
-		cancel()
-	}()
-}
-
-func resolveArchiveName(job *types.Job) {
-	switch job.ArchiveName {
-	case "":
-		job.ArchiveName = "manual-m-{utcnow}"
-	case "auto":
-		job.ArchiveName = "auto-{utcnow}"
-	default:
-		job.ArchiveName = job.ArchiveName + "-m-{utcnow}"
-	}
 }

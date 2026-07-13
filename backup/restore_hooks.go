@@ -13,14 +13,13 @@ package backup
 import (
 	"cs-agent/backup/borg"
 	"cs-agent/containermgr"
-	"cs-agent/csevent"
 	"cs-agent/types"
 	"fmt"
 	"strconv"
 	"strings"
 )
 
-func preRestore(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.Repository) (preRestoreSuccess bool) {
+func preRestore(vol *types.Volume, event *progress, repo *borg.Repository) (preRestoreSuccess bool) {
 
 	if len(vol.PreRestore) > 2 {
 		success := false
@@ -31,7 +30,7 @@ func preRestore(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.Repos
 			}
 			return success
 		}()
-		exitCode, _, err := containermgr.ServiceExec(strconv.Itoa(vol.ServiceID), vol.PreRestore, event)
+		exitCode, _, err := containermgr.ServiceExec(strconv.Itoa(vol.ServiceID), vol.PreRestore)
 
 		if err != nil {
 			go event.PostEventUpdate("agent-b98d45dff8fd639b", err.Error())
@@ -62,7 +61,7 @@ func preRestore(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.Repos
 
 }
 
-func postRestore(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.Repository) bool {
+func postRestore(vol *types.Volume, event *progress, repo *borg.Repository) bool {
 
 	if len(vol.PostRestore) > 2 {
 		defer func() bool {
@@ -72,7 +71,7 @@ func postRestore(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.Repo
 			}
 			return true
 		}()
-		exitCode, _, err := containermgr.ServiceExec(strconv.Itoa(vol.ServiceID), vol.PostRestore, event)
+		exitCode, _, err := containermgr.ServiceExec(strconv.Itoa(vol.ServiceID), vol.PostRestore)
 
 		if err != nil {
 			go event.PostEventUpdate("agent-1b5d010969199a18", err.Error())
@@ -96,7 +95,7 @@ func postRestore(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.Repo
 	}
 }
 
-func rollbackRestore(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.Repository) bool {
+func rollbackRestore(vol *types.Volume, event *progress, repo *borg.Repository) bool {
 
 	if len(vol.PostRestore) > 0 {
 		defer func() bool {
@@ -106,7 +105,7 @@ func rollbackRestore(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.
 			}
 			return true
 		}()
-		exitCode, _, err := containermgr.ServiceExec(strconv.Itoa(vol.ServiceID), vol.PostRestore, event)
+		exitCode, _, err := containermgr.ServiceExec(strconv.Itoa(vol.ServiceID), vol.PostRestore)
 
 		if err != nil {
 			go event.PostEventUpdate("agent-9393516879f411ea", err.Error())

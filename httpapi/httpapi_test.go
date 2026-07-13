@@ -53,7 +53,6 @@ func newTestEnv(t *testing.T) *testEnv {
 		ListenAddr:     "127.0.0.1:0",
 		AdminTokenHash: hashToken(adminToken),
 		MaxBodyBytes:   1 << 20, // 1 MiB body cap for the 413 test
-		ProxyToConsul:  false,   // proxy MUST stay off for these tests
 	}, st, nil)
 
 	hs := httptest.NewServer(srv.Handler())
@@ -565,19 +564,15 @@ func TestBodyCap_413(t *testing.T) {
 	mustStatus(t, resp, http.StatusRequestEntityTooLarge)
 }
 
-// --- Proxy disabled -----------------------------------------------------------
+// --- Unknown principal / path -------------------------------------------------
 
-// TestProxyDisabled_UnknownTenant401_NoConsul: with proxy_to_consul off
-// (default), an unknown tenant is a flat 401 — there is no Consul dependency on
-// the serving path (this test never touches Consul). And an unknown PATH for a
-// known tenant is a 404, not a forward.
-func TestProxyDisabled_UnknownTenant401_NoConsul(t *testing.T) {
-	e := newTestEnv(t) // ProxyToConsul: false
-	if e.srv.proxyEnabled() {
-		t.Fatal("test env must have the proxy disabled")
-	}
+// TestUnknownTenant401: an unknown tenant is a flat 401, and an unknown PATH for
+// a known tenant is a 404. A project is served exactly when its tenant row
+// exists; there is no Consul fallback.
+func TestUnknownTenant401(t *testing.T) {
+	e := newTestEnv(t)
 
-	// Unknown tenant → 401, no forward.
+	// Unknown tenant → 401.
 	resp := e.do("GET", "/v1/db/anything", "totally-unknown-token", nil)
 	mustStatus(t, resp, http.StatusUnauthorized)
 

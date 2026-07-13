@@ -1,40 +1,42 @@
 package backup
 
 import (
+	"context"
 	"cs-agent/backup/borg"
+	"cs-agent/store"
 	"cs-agent/types"
 	"os"
 
 	"github.com/getsentry/sentry-go"
 )
 
-func prune(consul types.ConsulKV) {
+// prune applies each owned volume's borg retention policy. Reads volume
+// desired-state from control.db; runs under the per-repo lock so it never
+// overlaps compact/export of the same repo.
+func prune(ctx context.Context, st *store.Store) {
 	defer sentry.Recover()
 	hostname, _ := os.Hostname()
-	keys, _, err := consul.Keys("volumes", "", nil)
+
+	vols, err := st.ListVolumesByNode(ctx, hostname)
 	if err != nil {
-		panic(err)
+		backupLogger().Warn("Prune error listing volumes", "error", err.Error())
+		sentry.CaptureException(err)
+		return
 	}
 
-	for _, value := range keys {
-
-		pair, _, err := consul.Get(value, nil)
+	for _, sv := range vols {
+		vol, err := types.LoadVolume(sv.Config)
 		if err != nil {
-			panic(err)
-		}
-		vol, err := types.LoadVolume(pair.Value)
-		if err != nil {
-			backupLogger().Warn("Fatal error parsing volume from consul data", "volume", pair.Value, "error", err.Error())
+			backupLogger().Warn("Prune: error parsing volume", "volume", sv.Name, "error", err.Error())
 			sentry.CaptureException(err)
 			continue
 		}
 		if vol.Backup && vol.Node == hostname {
 			// Serialize against compact/export of the same repo. Scoped to a
-			// closure so the lock releases each iteration (and on panic), not at
-			// function return.
+			// closure so the lock releases each iteration (and on panic).
 			func() {
 				defer borg.AcquireRepoLock(vol.Name)()
-				repo, repoErr := borg.FindRepository(&vol, &vol)
+				repo, repoErr := borg.FindRepository(st, &vol, &vol)
 				if repoErr != nil {
 					backupLogger().Warn("Prune Volume Error, error loading repo", "volume", vol.Name, "error", repoErr.Message)
 					return
@@ -46,5 +48,4 @@ func prune(consul types.ConsulKV) {
 			}()
 		}
 	}
-
 }

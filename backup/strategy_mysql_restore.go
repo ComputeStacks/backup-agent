@@ -3,7 +3,6 @@ package backup
 import (
 	"cs-agent/backup/borg"
 	"cs-agent/containermgr"
-	"cs-agent/csevent"
 	"cs-agent/types"
 	"strconv"
 	"strings"
@@ -12,7 +11,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-func preRestoreMysql(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.Repository) (preRestoreMysqlSuccess bool) {
+func preRestoreMysql(vol *types.Volume, event *progress, repo *borg.Repository) (preRestoreMysqlSuccess bool) {
 
 	if !stopAllMysqlContainers(vol, event) {
 		return false
@@ -26,7 +25,7 @@ func preRestoreMysql(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.
 
 	execCmd = append(execCmd, "sh", "-c", strings.Join(preRestoreCmd, " "))
 
-	exitCode, _, err := repo.Container.Exec(execCmd, event)
+	exitCode, _, err := repo.Container.Exec(execCmd)
 
 	if err != nil {
 		backupLogger().Warn("Failed to snapshot existing data", "error", err.Error())
@@ -43,7 +42,7 @@ func preRestoreMysql(vol *types.Volume, event *csevent.ProjectEvent, repo *borg.
 	return true
 }
 
-func postRestoreMysql(event *csevent.ProjectEvent, repo *borg.Repository) bool {
+func postRestoreMysql(event *progress, repo *borg.Repository) bool {
 
 	var postRestoreCmd []string
 	var execCmd []string
@@ -54,7 +53,7 @@ func postRestoreMysql(event *csevent.ProjectEvent, repo *borg.Repository) bool {
 
 	execCmd = append(execCmd, "sh", "-c", strings.Join(postRestoreCmd, " "))
 
-	exitCode, _, err := repo.Container.Exec(execCmd, event)
+	exitCode, _, err := repo.Container.Exec(execCmd)
 
 	if err != nil {
 		backupLogger().Warn("Failed to execute mysql cleanup on restore", "error", err.Error())
@@ -66,7 +65,7 @@ func postRestoreMysql(event *csevent.ProjectEvent, repo *borg.Repository) bool {
 
 }
 
-func rollbackRestoreMysql(event *csevent.ProjectEvent, repo *borg.Repository) bool {
+func rollbackRestoreMysql(event *progress, repo *borg.Repository) bool {
 
 	// Clean MySQL directory and move files back
 	var rollbackCmd []string
@@ -77,7 +76,7 @@ func rollbackRestoreMysql(event *csevent.ProjectEvent, repo *borg.Repository) bo
 
 	execCmd = append(execCmd, "sh", "-c", strings.Join(rollbackCmd, " "))
 
-	exitCode, _, err := repo.Container.Exec(execCmd, event)
+	exitCode, _, err := repo.Container.Exec(execCmd)
 
 	if err != nil {
 		backupLogger().Warn("Failed to store database backup", "error", err.Error())
@@ -89,7 +88,7 @@ func rollbackRestoreMysql(event *csevent.ProjectEvent, repo *borg.Repository) bo
 
 }
 
-func stopAllMysqlContainers(vol *types.Volume, event *csevent.ProjectEvent) bool {
+func stopAllMysqlContainers(vol *types.Volume, event *progress) bool {
 	cli, cliErr := client.NewClientWithOpts(client.WithVersion(viper.GetString("docker.version")))
 	if cliErr != nil {
 		backupLogger().Warn("Failed to connect to docker", "error", cliErr.Error(), "function", "stopAllMysqlContainers")

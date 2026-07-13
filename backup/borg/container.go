@@ -160,7 +160,7 @@ func (r *Repository) ExecWithLog(cmd []string) (exitCode int, response string, l
 		return 99, "", LogMessage{Message: "Missing backup container"}
 	}
 	execCmd := []string{"sh", "-c", strings.Join(cmd, " ")}
-	exitCode, response, err := r.Container.Exec(execCmd, nil)
+	exitCode, response, err := r.Container.Exec(execCmd)
 
 	if err != nil {
 		borgLogger().Debug("ExecWithLog Error", "error", err.Error())

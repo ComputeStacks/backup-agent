@@ -20,41 +20,23 @@ metadata:
   # Cap on a single request body (413 on exceed). The STORED value is uncapped —
   # this is only a transport limit (killing Consul's 512 KB ceiling is the point).
   max_body_bytes: 10485760 # 10 MiB
-  # Dual-run proxy-to-Consul leg for un-migrated projects. DEFAULT FALSE and
-  # not yet wired: leave it off until the Bearer→X-Consul-Token wire-auth is
-  # resolved. With it off, an unknown tenant is 401 and an unknown path 404.
-  proxy_to_consul: false
-consul:
-  host: 127.0.0.1:8500
-  token: "" # Consul Auth Token
-  ##
-  # TLS Configuration
-  #
-  # If true, it will look for certificates here: /etc/computestacks/certs/consul
-  #  * ca.crt
-  #  * client.crt
-  #  * client.key
-  #
-  tls: true
 
-# Group 2 (Consul retirement) per-consumer cutover flags. All false =
-# Consul-authoritative. Each flag flips ONE consumer from Consul to the embedded
-# control.db, one coordinated cutover at a time. Leave all false until the rollout
-# runbook says otherwise. (Endpoints are scaffolded but nothing consumes these in
-# v2.2.0.)
-cutover:
-  tasks: false        # task dispatch + status (coordinated, drain-first)
-  exports: false      # export result records -> tasks.result_json (dual-write)
-  repositories: false # borg repo metadata -> control.db (dual-write)
-  firewall: false     # published-port rules read from control.db (populate-first)
-  volumes: false      # volume desired-state read from control.db (populate-first)
+# Changelog retention (the prune janitor). A row is deleted once the controller
+# has acked it AND it is older than prune_min_age_sec; any row older than
+# prune_max_age_sec is dropped regardless of ack (bounds growth before the
+# controller integrates and starts acking).
+changelog:
+  prune_freq: "*/15 * * * *"
+  prune_min_age_sec: 604800  # 7d
+  prune_max_age_sec: 2592000 # 30d
+
+# Terminal task-row retention (all kinds). Must exceed the longest export
+# presigned-URL TTL so a completed export whose link is still live isn't reaped.
+tasks:
+  retention_sec: 604800 # 7d
+
 backups:
   enabled: true
-
-  # Where the scheduler + compact/prune read volume desired-state: "consul"
-  # (default) or "store" (control.db). Flipped to "store" with the volumes cutover
-  # (paired with cutover.volumes). Not consumed yet in v2.2.0.
-  schedule_source: consul
 
   ##
   # How often to check for new volumes
@@ -75,7 +57,6 @@ backups:
   #  - @monthly
   #  - @yearly (or @annually)
   #
-  check_freq: "*/2 * * * *" # Every 2-minutes
   prune_freq: "15 1 * * *" # Every day at 01:15
 
   # Borg compaction (reclaim freed space) now runs in-agent instead of as a host

@@ -38,24 +38,16 @@ func ConfigureApp() {
 
 	viper.SetDefault("queue.numworkers", 3)
 
-	viper.SetDefault("consul.host", "127.0.0.1:8500")
-	viper.SetDefault("consul.token", "")
-	viper.SetDefault("consul.tls", false)
-
-	// Group 2 (Consul retirement) per-consumer cutover flags. All default false =
-	// Consul-authoritative. Each flips ONE consumer's source/target from Consul to
-	// the embedded control.db, one coordinated cutover at a time (see the roadmap).
-	// UP consumers (task status, exports, repositories) dual-write until their flag
-	// is set and are config-only reversible; DOWN consumers (firewall, volumes) and
-	// the task dispatcher are COORDINATED cutovers (the controller must populate
-	// control.db first, tracked by the per-domain populated sentinel) and are NOT
-	// unilaterally reversible. Not consumed yet in v2.2.0 (endpoints scaffolded
-	// only); wired in later increments.
-	viper.SetDefault("cutover.tasks", false)
-	viper.SetDefault("cutover.exports", false)
-	viper.SetDefault("cutover.repositories", false)
-	viper.SetDefault("cutover.firewall", false)
-	viper.SetDefault("cutover.volumes", false)
+	// Changelog retention (prune janitor): delete rows at/below the controller's
+	// acked watermark once older than prune_min_age_sec, plus any row older than
+	// prune_max_age_sec regardless of ack (bounds growth before the controller
+	// integrates and starts acking).
+	viper.SetDefault("changelog.prune_freq", "*/15 * * * *")
+	viper.SetDefault("changelog.prune_min_age_sec", 604800)  // 7d
+	viper.SetDefault("changelog.prune_max_age_sec", 2592000) // 30d
+	// Terminal task-row retention (all kinds). Must exceed the longest export
+	// presigned-URL TTL so a completed export whose link is still live isn't reaped.
+	viper.SetDefault("tasks.retention_sec", 604800) // 7d
 
 	// Embedded SQLite data plane (store/): control.db + per-project metadata DBs
 	// live under this directory.
@@ -67,20 +59,12 @@ func ConfigureApp() {
 	// primary_ip:8500. admin_token_hash is the hex sha256 of the per-node admin
 	// Bearer the controller authenticates with (empty disables the admin scope).
 	// max_body_bytes caps a single request body (413 on exceed) — the STORED
-	// value is uncapped; this is only a transport limit. proxy_to_consul gates
-	// the dual-run proxy-to-Consul leg and DEFAULTS FALSE (blocker: not wired
-	// until Bearer→X-Consul-Token wire-auth is resolved).
+	// value is uncapped; this is only a transport limit.
 	viper.SetDefault("metadata.listen_addr", ":8500")
 	viper.SetDefault("metadata.admin_token_hash", "")
 	viper.SetDefault("metadata.max_body_bytes", 10485760) // 10 MiB
-	viper.SetDefault("metadata.proxy_to_consul", false)
 
 	viper.SetDefault("backups.enabled", true)
-	// Where the scheduler + compact/prune read volume desired-state: "consul"
-	// (default) or "store" (control.db). Flipped to "store" as part of the volumes
-	// cutover (v2.8.0, paired with cutover.volumes). Not consumed yet in v2.2.0.
-	viper.SetDefault("backups.schedule_source", "consul")
-	viper.SetDefault("backups.check_freq", "* * * * *")
 	viper.SetDefault("backups.prune_freq", "15 1 * * *")
 	// Compaction now runs in-agent (was a host cron on the backup server). Set
 	// to "" to disable scheduling it. Offset from prune so prune (mark) runs
@@ -146,8 +130,6 @@ func ConfigureApp() {
 	viper.SetDefault("backups.export.s3.sse", "AES256")             // server-side encryption (exported tar is plaintext)
 	viper.SetDefault("backups.export.s3.default_ttl_sec", 43200)    // presigned URL TTL when unspecified (12h)
 	viper.SetDefault("backups.export.s3.max_ttl_sec", 86400)        // hard cap on a requested TTL (24h)
-	viper.SetDefault("backups.export.cleanup_freq", "*/30 * * * *") // periodic reap of stale download records from Consul; "" disables
-	viper.SetDefault("backups.export.failed_retention_sec", 86400)  // keep a failed export's record this long before reaping (24h)
 
 	// MariaDB Backup Configuration
 	viper.SetDefault("mariadb.lock_wait.query_type", "ALL")
