@@ -363,6 +363,173 @@ func (s *Server) handleAdminChangelogList(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, changelogListResponse{Entries: entries})
 }
 
+// --- Group 2 DOWN desired-state + task dispatch (v2.2.0 scaffold) -------------
+//
+// These admin endpoints let the controller submit node desired-state (firewall
+// rules, volume config) and tasks DOWN, persisting to control.db + the changelog.
+// In v2.2.0 nothing consumes them yet (dispatch/render/schedule still read
+// Consul; the cutover.* flags default false); they exist so the controller can
+// integrate against a real surface before each coordinated cutover.
+
+// taskCreateRequest is the body of POST /v1/admin/tasks. The controller supplies
+// the task id (the jid) so a retried POST is idempotent — CreateTask dedups on it
+// and re-dispatch never happens. node identifies the owning node.
+type taskCreateRequest struct {
+	ID        string          `json:"id"`
+	ProjectID string          `json:"project_id"`
+	Name      string          `json:"name"`
+	Node      string          `json:"node"`
+	Volume    string          `json:"volume"`
+	Archive   string          `json:"archive"`
+	AuditID   int64           `json:"audit_id"`
+	Params    json.RawMessage `json:"params"`
+}
+
+// taskCreateResponse is the 202 body. created=false means the id already existed
+// (a duplicate/retried POST) — the row and any dispatch are untouched.
+type taskCreateResponse struct {
+	ID      string `json:"id"`
+	Created bool   `json:"created"`
+}
+
+// handleAdminTaskCreate records a controller-submitted task. It only persists the
+// row + its changelog entry in v2.2.0; the in-process dispatcher that runs it is
+// wired in v2.3.0 behind cutover.tasks.
+func (s *Server) handleAdminTaskCreate(w http.ResponseWriter, r *http.Request, _ scope) {
+	body, ok := s.readBody(w, r)
+	if !ok {
+		return
+	}
+	var req taskCreateRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.ID == "" || req.Name == "" || req.Node == "" {
+		writeError(w, http.StatusBadRequest, "id, name and node are required")
+		return
+	}
+	params := req.Params
+	if len(params) == 0 || string(params) == "null" {
+		params = nil
+	}
+	created, err := s.store.CreateTask(r.Context(), store.Task{
+		ID:        req.ID,
+		ProjectID: req.ProjectID,
+		Name:      req.Name,
+		Node:      req.Node,
+		Volume:    req.Volume,
+		Archive:   req.Archive,
+		AuditID:   req.AuditID,
+		Params:    params,
+	})
+	if err != nil {
+		s.storeError(w, err, "create task")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, taskCreateResponse{ID: req.ID, Created: created})
+}
+
+// taskCancelResponse is the body of DELETE /v1/admin/tasks/{id}. cancelled=false
+// means the task was not pending (already dispatched/terminal, or absent).
+type taskCancelResponse struct {
+	ID        string `json:"id"`
+	Cancelled bool   `json:"cancelled"`
+}
+
+// handleAdminTaskCancel cancels a still-pending task (best-effort; a running task
+// is left to finish).
+func (s *Server) handleAdminTaskCancel(w http.ResponseWriter, r *http.Request, _ scope) {
+	id := r.PathValue("id")
+	cancelled, err := s.store.CancelPendingTask(r.Context(), id)
+	if err != nil {
+		s.storeError(w, err, "cancel task")
+		return
+	}
+	writeJSON(w, http.StatusOK, taskCancelResponse{ID: id, Cancelled: cancelled})
+}
+
+// handleAdminFirewallPut stores a node's published-port NAT desired-state. The
+// request body IS the firewall.NatRules JSON (an explicit empty rule set is a
+// valid "zero published ports" — distinct from never having PUT, which the
+// populated sentinel records). Latches the firewall-populated sentinel.
+func (s *Server) handleAdminFirewallPut(w http.ResponseWriter, r *http.Request, _ scope) {
+	node := r.PathValue("host")
+	body, ok := s.readBody(w, r)
+	if !ok {
+		return
+	}
+	if !json.Valid(body) {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if err := s.store.PutFirewallRules(r.Context(), node, body); err != nil {
+		s.storeError(w, err, "put firewall_rules")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleAdminFirewallDelete removes a node's rule set (idempotent no-op if
+// absent). The firewall-populated sentinel stays latched.
+func (s *Server) handleAdminFirewallDelete(w http.ResponseWriter, r *http.Request, _ scope) {
+	node := r.PathValue("host")
+	if err := s.store.DeleteFirewallRules(r.Context(), node); err != nil {
+		s.storeError(w, err, "delete firewall_rules")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// volumePeek pulls the owning node out of a volume config body so the store can
+// index it (ListVolumesByNode) without interpreting the rest of the blob.
+type volumePeek struct {
+	Node string `json:"node"`
+}
+
+// handleAdminVolumePut stores a volume's desired-state. project_id + name come
+// from the path; the body is the full types.Volume config JSON (carries node,
+// freq, retention, …). Latches the volumes-populated sentinel.
+func (s *Server) handleAdminVolumePut(w http.ResponseWriter, r *http.Request, _ scope) {
+	projectID := r.PathValue("project_id")
+	name := r.PathValue("name")
+	body, ok := s.readBody(w, r)
+	if !ok {
+		return
+	}
+	if !json.Valid(body) {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	var peek volumePeek
+	if err := json.Unmarshal(body, &peek); err != nil || peek.Node == "" {
+		writeError(w, http.StatusBadRequest, "volume config must include node")
+		return
+	}
+	if err := s.store.PutVolume(r.Context(), store.Volume{
+		Name:      name,
+		ProjectID: projectID,
+		Node:      peek.Node,
+		Config:    body,
+	}); err != nil {
+		s.storeError(w, err, "put volume")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleAdminVolumeDelete removes a volume's desired-state (idempotent no-op if
+// absent).
+func (s *Server) handleAdminVolumeDelete(w http.ResponseWriter, r *http.Request, _ scope) {
+	projectID := r.PathValue("project_id")
+	name := r.PathValue("name")
+	if err := s.store.DeleteVolume(r.Context(), name, projectID); err != nil {
+		s.storeError(w, err, "delete volume")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 // --- helpers -----------------------------------------------------------------
 
 // readBody reads the request body under the server's configured cap

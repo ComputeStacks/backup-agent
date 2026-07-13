@@ -42,6 +42,21 @@ func ConfigureApp() {
 	viper.SetDefault("consul.token", "")
 	viper.SetDefault("consul.tls", false)
 
+	// Group 2 (Consul retirement) per-consumer cutover flags. All default false =
+	// Consul-authoritative. Each flips ONE consumer's source/target from Consul to
+	// the embedded control.db, one coordinated cutover at a time (see the roadmap).
+	// UP consumers (task status, exports, repositories) dual-write until their flag
+	// is set and are config-only reversible; DOWN consumers (firewall, volumes) and
+	// the task dispatcher are COORDINATED cutovers (the controller must populate
+	// control.db first, tracked by the per-domain populated sentinel) and are NOT
+	// unilaterally reversible. Not consumed yet in v2.2.0 (endpoints scaffolded
+	// only); wired in later increments.
+	viper.SetDefault("cutover.tasks", false)
+	viper.SetDefault("cutover.exports", false)
+	viper.SetDefault("cutover.repositories", false)
+	viper.SetDefault("cutover.firewall", false)
+	viper.SetDefault("cutover.volumes", false)
+
 	// Embedded SQLite data plane (store/): control.db + per-project metadata DBs
 	// live under this directory.
 	viper.SetDefault("store.data_dir", "/var/lib/cs-agent")
@@ -61,6 +76,10 @@ func ConfigureApp() {
 	viper.SetDefault("metadata.proxy_to_consul", false)
 
 	viper.SetDefault("backups.enabled", true)
+	// Where the scheduler + compact/prune read volume desired-state: "consul"
+	// (default) or "store" (control.db). Flipped to "store" as part of the volumes
+	// cutover (v2.8.0, paired with cutover.volumes). Not consumed yet in v2.2.0.
+	viper.SetDefault("backups.schedule_source", "consul")
 	viper.SetDefault("backups.check_freq", "* * * * *")
 	viper.SetDefault("backups.prune_freq", "15 1 * * *")
 	// Compaction now runs in-agent (was a host cron on the backup server). Set

@@ -63,6 +63,16 @@ type Store interface {
 
 	CreateActionRequest(ctx context.Context, id, projectID, actionType string, params json.RawMessage) (store.ActionRequest, error)
 	ChangelogSince(ctx context.Context, since int64, entityType string, limit int) ([]store.ChangelogEntry, error)
+
+	// Group 2 (Consul retirement) DOWN desired-state + task dispatch. v2.2.0
+	// scaffolds these endpoints; the agent-side consumers (dispatcher, firewall
+	// renderer, scheduler) switch onto them in later increments behind cutover.*.
+	CreateTask(ctx context.Context, t store.Task) (created bool, err error)
+	CancelPendingTask(ctx context.Context, id string) (cancelled bool, err error)
+	PutVolume(ctx context.Context, v store.Volume) error
+	DeleteVolume(ctx context.Context, name, projectID string) error
+	PutFirewallRules(ctx context.Context, node string, rules json.RawMessage) error
+	DeleteFirewallRules(ctx context.Context, node string) error
 }
 
 // Config configures the metadata HTTP server. Populate from viper in main.go.
@@ -206,6 +216,17 @@ func (s *Server) routes() {
 
 	// --- Controller pull channel for the changelog (per-node admin Bearer) ---
 	s.mux.HandleFunc("GET /v1/admin/changelog", s.requireAdmin(s.handleAdminChangelogList))
+
+	// --- Controller DOWN desired-state + task dispatch (per-node admin Bearer) ---
+	// v2.2.0 scaffold: these persist to control.db + the changelog; no agent
+	// consumer/dispatch/render is wired to them yet (cutover.* default false), so
+	// they are behaviorally inert until each coordinated cutover.
+	s.mux.HandleFunc("POST /v1/admin/tasks", s.requireAdmin(s.handleAdminTaskCreate))
+	s.mux.HandleFunc("DELETE /v1/admin/tasks/{id}", s.requireAdmin(s.handleAdminTaskCancel))
+	s.mux.HandleFunc("PUT /v1/admin/nodes/{host}/firewall_rules", s.requireAdmin(s.handleAdminFirewallPut))
+	s.mux.HandleFunc("DELETE /v1/admin/nodes/{host}/firewall_rules", s.requireAdmin(s.handleAdminFirewallDelete))
+	s.mux.HandleFunc("PUT /v1/admin/projects/{project_id}/volumes/{name}", s.requireAdmin(s.handleAdminVolumePut))
+	s.mux.HandleFunc("DELETE /v1/admin/projects/{project_id}/volumes/{name}", s.requireAdmin(s.handleAdminVolumeDelete))
 }
 
 // authenticate decides the request scope from the Authorization header ALONE.

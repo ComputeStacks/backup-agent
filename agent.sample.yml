@@ -36,8 +36,25 @@ consul:
   #  * client.key
   #
   tls: true
+
+# Group 2 (Consul retirement) per-consumer cutover flags. All false =
+# Consul-authoritative. Each flag flips ONE consumer from Consul to the embedded
+# control.db, one coordinated cutover at a time. Leave all false until the rollout
+# runbook says otherwise. (Endpoints are scaffolded but nothing consumes these in
+# v2.2.0.)
+cutover:
+  tasks: false        # task dispatch + status (coordinated, drain-first)
+  exports: false      # export result records -> tasks.result_json (dual-write)
+  repositories: false # borg repo metadata -> control.db (dual-write)
+  firewall: false     # published-port rules read from control.db (populate-first)
+  volumes: false      # volume desired-state read from control.db (populate-first)
 backups:
   enabled: true
+
+  # Where the scheduler + compact/prune read volume desired-state: "consul"
+  # (default) or "store" (control.db). Flipped to "store" with the volumes cutover
+  # (paired with cutover.volumes). Not consumed yet in v2.2.0.
+  schedule_source: consul
 
   ##
   # How often to check for new volumes

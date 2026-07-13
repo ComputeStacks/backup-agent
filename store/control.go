@@ -65,6 +65,69 @@ var controlMigrations = []migration{
 			return err
 		},
 	},
+	{
+		version: 3,
+		up: func(tx *sql.Tx) error {
+			// Group 2 (Consul retirement) control tables. Each is populated
+			// during Phases 2-3 as its Consul keyspace is inverted onto
+			// control.db; all are created now (even while empty) so the changelog
+			// entity_type set is stable from day one:
+			//   task, volume, firewall_rule, repository.
+			//
+			//  - tasks:          jobs/<jid> dispatch + status (UP truth once cut over)
+			//  - volumes:        volumes/<name> desired-state (DOWN intent); freq lives here
+			//  - firewall_rules: nodes/<host>/ingress_rules (DOWN intent, read-only)
+			//  - repositories:   borg/repository/<name> observed size/archives (UP)
+			//  - control_meta:   node-local janitor/consumer state (per-domain
+			//                    "populated" sentinels; later the changelog acked
+			//                    watermark). NOT node truth -> never changelogged.
+			_, err := tx.Exec(`
+				CREATE TABLE tasks (
+					id          TEXT    PRIMARY KEY,
+					project_id  TEXT,
+					name        TEXT    NOT NULL,
+					node        TEXT    NOT NULL,
+					volume      TEXT,
+					archive     TEXT,
+					audit_id    INTEGER,
+					params      TEXT,
+					status      TEXT    NOT NULL DEFAULT 'pending',
+					result_json TEXT,
+					created_at  INTEGER NOT NULL,
+					updated_at  INTEGER NOT NULL
+				);
+				CREATE INDEX idx_tasks_node_status ON tasks(node, status);
+
+				CREATE TABLE volumes (
+					name       TEXT    PRIMARY KEY,
+					project_id TEXT,
+					node       TEXT    NOT NULL,
+					config     TEXT    NOT NULL,
+					updated_at INTEGER NOT NULL
+				);
+
+				CREATE TABLE firewall_rules (
+					node       TEXT    PRIMARY KEY,
+					rules      TEXT    NOT NULL,
+					updated_at INTEGER NOT NULL
+				);
+
+				CREATE TABLE repositories (
+					name         TEXT    PRIMARY KEY,
+					size_on_disk INTEGER,
+					total_size   INTEGER,
+					archives     TEXT,
+					updated_at   INTEGER NOT NULL
+				);
+
+				CREATE TABLE control_meta (
+					key   TEXT PRIMARY KEY,
+					value TEXT NOT NULL
+				);
+			`)
+			return err
+		},
+	},
 }
 
 // ErrTenantExists is returned when UpsertTenant would collide on token_hash with
