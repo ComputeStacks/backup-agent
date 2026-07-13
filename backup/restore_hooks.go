@@ -25,25 +25,25 @@ func preRestore(vol *types.Volume, event *progress, repo *borg.Repository) (preR
 		success := false
 		defer func() (preRestoreSuccess bool) {
 			if r := recover(); r != nil {
-				go event.PostEventUpdate("agent-cd090c1cc5c19617", fmt.Sprintf("%#v", r))
+				event.PostEventUpdate("agent-cd090c1cc5c19617", fmt.Sprintf("%#v", r))
 				return false
 			}
 			return success
 		}()
-		exitCode, _, err := containermgr.ServiceExec(strconv.Itoa(vol.ServiceID), vol.PreRestore)
+		exitCode, out, err := containermgr.ServiceExec(strconv.Itoa(vol.ServiceID), vol.PreRestore)
 
 		if err != nil {
-			go event.PostEventUpdate("agent-b98d45dff8fd639b", err.Error())
+			event.PostEventUpdate("agent-b98d45dff8fd639b", withOutput(err.Error(), out))
 			return false
 		}
 
 		if exitCode > 0 {
 			if vol.RestoreContinueOnError {
-				finalMsg := "Pre-Restore command returned a non-zero exit code (" + string(rune(exitCode)) + "): " + strings.Join(vol.PreRestore, " ")
-				go event.PostEventUpdate("agent-17a5e40308439ab3", finalMsg)
+				finalMsg := "Pre-Restore command returned a non-zero exit code (" + strconv.Itoa(exitCode) + "): " + strings.Join(vol.PreRestore, " ")
+				event.PostEventUpdate("agent-17a5e40308439ab3", withOutput(finalMsg, out))
 			} else {
-				finalMsg := "Restored halted due to non-zero exit code (" + string(rune(exitCode)) + "): " + strings.Join(vol.PreRestore, " ")
-				go event.PostEventUpdate("agent-059e93c9920612b8", finalMsg)
+				finalMsg := "Restored halted due to non-zero exit code (" + strconv.Itoa(exitCode) + "): " + strings.Join(vol.PreRestore, " ")
+				event.PostEventUpdate("agent-059e93c9920612b8", withOutput(finalMsg, out))
 				return false
 			}
 		}
@@ -66,21 +66,21 @@ func postRestore(vol *types.Volume, event *progress, repo *borg.Repository) bool
 	if len(vol.PostRestore) > 2 {
 		defer func() bool {
 			if r := recover(); r != nil {
-				go event.PostEventUpdate("agent-b5117962943e98cb", fmt.Sprintf("%#v", r))
+				event.PostEventUpdate("agent-b5117962943e98cb", fmt.Sprintf("%#v", r))
 				return false
 			}
 			return true
 		}()
-		exitCode, _, err := containermgr.ServiceExec(strconv.Itoa(vol.ServiceID), vol.PostRestore)
+		exitCode, out, err := containermgr.ServiceExec(strconv.Itoa(vol.ServiceID), vol.PostRestore)
 
 		if err != nil {
-			go event.PostEventUpdate("agent-1b5d010969199a18", err.Error())
+			event.PostEventUpdate("agent-1b5d010969199a18", withOutput(err.Error(), out))
 			return false
 		}
 
 		if exitCode > 0 {
-			finalMsg := "Post-Backup commands returned a non-zero exit code (" + string(rune(exitCode)) + "): " + strings.Join(vol.PostRestore, " ")
-			go event.PostEventUpdate("agent-9330f19b388b4428", finalMsg)
+			finalMsg := "Post-Backup commands returned a non-zero exit code (" + strconv.Itoa(exitCode) + "): " + strings.Join(vol.PostRestore, " ")
+			event.PostEventUpdate("agent-9330f19b388b4428", withOutput(finalMsg, out))
 			return false
 		}
 
@@ -100,21 +100,21 @@ func rollbackRestore(vol *types.Volume, event *progress, repo *borg.Repository) 
 	if len(vol.PostRestore) > 0 {
 		defer func() bool {
 			if r := recover(); r != nil {
-				go event.PostEventUpdate("agent-c290fcc106e4f78a", fmt.Sprintf("%#v", r))
+				event.PostEventUpdate("agent-c290fcc106e4f78a", fmt.Sprintf("%#v", r))
 				return false
 			}
 			return true
 		}()
-		exitCode, _, err := containermgr.ServiceExec(strconv.Itoa(vol.ServiceID), vol.PostRestore)
+		exitCode, out, err := containermgr.ServiceExec(strconv.Itoa(vol.ServiceID), vol.PostRestore)
 
 		if err != nil {
-			go event.PostEventUpdate("agent-9393516879f411ea", err.Error())
+			event.PostEventUpdate("agent-9393516879f411ea", withOutput(err.Error(), out))
 			return false
 		}
 
 		if exitCode > 0 {
-			finalMsg := "Post-Backup commands returned a non-zero exit code (" + string(rune(exitCode)) + "): " + strings.Join(vol.PostRestore, " ")
-			go event.PostEventUpdate("agent-cf02d05dd4d77905", finalMsg)
+			finalMsg := "Post-Backup commands returned a non-zero exit code (" + strconv.Itoa(exitCode) + "): " + strings.Join(vol.PostRestore, " ")
+			event.PostEventUpdate("agent-cf02d05dd4d77905", withOutput(finalMsg, out))
 			return false
 		}
 

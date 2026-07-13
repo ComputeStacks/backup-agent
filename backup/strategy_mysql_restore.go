@@ -25,17 +25,17 @@ func preRestoreMysql(vol *types.Volume, event *progress, repo *borg.Repository) 
 
 	execCmd = append(execCmd, "sh", "-c", strings.Join(preRestoreCmd, " "))
 
-	exitCode, _, err := repo.Container.Exec(execCmd)
+	exitCode, out, err := repo.Container.Exec(execCmd)
 
 	if err != nil {
 		backupLogger().Warn("Failed to snapshot existing data", "error", err.Error())
-		go event.PostEventUpdate("agent-82c8d22caa01995d", err.Error())
+		event.PostEventUpdate("agent-82c8d22caa01995d", withOutput(err.Error(), out))
 		return false
 	}
 
 	if exitCode > 0 {
 		backupLogger().Warn("Failed to run preRestoreMysql Job", "exitCode", exitCode, "commands", "backupCmd")
-		go event.PostEventUpdate("agent-0590433e5ef199c9", "Save data command failed to run.")
+		event.PostEventUpdate("agent-0590433e5ef199c9", withOutput("Save data command failed to run.", out))
 		return false
 	}
 
@@ -53,15 +53,19 @@ func postRestoreMysql(event *progress, repo *borg.Repository) bool {
 
 	execCmd = append(execCmd, "sh", "-c", strings.Join(postRestoreCmd, " "))
 
-	exitCode, _, err := repo.Container.Exec(execCmd)
+	exitCode, out, err := repo.Container.Exec(execCmd)
 
 	if err != nil {
 		backupLogger().Warn("Failed to execute mysql cleanup on restore", "error", err.Error())
-		go event.PostEventUpdate("agent-c24b0abcd88acdff", err.Error())
+		event.PostEventUpdate("agent-c24b0abcd88acdff", withOutput(err.Error(), out))
+		return false
+	}
+	if exitCode > 0 {
+		event.PostEventUpdate("agent-c24b0abcd88acdff", withOutput("postRestoreMysql cleanup returned a non-zero exit code", out))
 		return false
 	}
 
-	return exitCode == 0
+	return true
 
 }
 
@@ -76,15 +80,19 @@ func rollbackRestoreMysql(event *progress, repo *borg.Repository) bool {
 
 	execCmd = append(execCmd, "sh", "-c", strings.Join(rollbackCmd, " "))
 
-	exitCode, _, err := repo.Container.Exec(execCmd)
+	exitCode, out, err := repo.Container.Exec(execCmd)
 
 	if err != nil {
 		backupLogger().Warn("Failed to store database backup", "error", err.Error())
-		go event.PostEventUpdate("agent-af1b0badd5d9b9f6", err.Error())
+		event.PostEventUpdate("agent-af1b0badd5d9b9f6", withOutput(err.Error(), out))
+		return false
+	}
+	if exitCode > 0 {
+		event.PostEventUpdate("agent-af1b0badd5d9b9f6", withOutput("rollbackRestoreMysql returned a non-zero exit code", out))
 		return false
 	}
 
-	return exitCode == 0
+	return true
 
 }
 

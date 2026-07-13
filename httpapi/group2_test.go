@@ -188,3 +188,25 @@ func TestAdminGroup2Routes_RequireAdmin(t *testing.T) {
 		mustStatus(t, resp, http.StatusForbidden)
 	}
 }
+
+// TestAdminVolumeDelete_EnqueuesTeardown proves the volume-DELETE borg-repo leak is
+// closed: DELETE enqueues a volume.trash teardown task (so the repo can't be
+// orphaned) before removing the desired-state row.
+func TestAdminVolumeDelete_EnqueuesTeardown(t *testing.T) {
+	e := newTestEnv(t)
+	body := []byte(`{"name":"vol-1","node":"node-a","freq":"0 2 * * *","backup":true}`)
+	mustStatus(t, e.do("PUT", "/v1/admin/projects/proj-a/volumes/vol-1", e.adminTok, body), http.StatusOK)
+
+	mustStatus(t, e.do("DELETE", "/v1/admin/projects/proj-a/volumes/vol-1", e.adminTok, nil), http.StatusOK)
+
+	tk, found, err := e.st.GetTask(ctxBG, "volume.trash:vol-1")
+	if err != nil || !found {
+		t.Fatalf("teardown task not enqueued on DELETE: found=%v err=%v", found, err)
+	}
+	if tk.Name != "volume.trash" || tk.Volume != "vol-1" {
+		t.Fatalf("teardown task: %+v", tk)
+	}
+	if _, found, _ := e.st.GetVolume(ctxBG, "vol-1"); found {
+		t.Fatal("volume desired-state row not removed after DELETE")
+	}
+}

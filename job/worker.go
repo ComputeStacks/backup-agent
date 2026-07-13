@@ -61,9 +61,16 @@ func (d *Dispatcher) runTask(ctx context.Context, task store.Task) {
 		status = store.TaskFailed
 		jobEvent().Warn("task failed", "task", task.ID, "kind", task.Name, "error", err.Error())
 	}
-	if uErr := d.st.UpdateTaskStatus(ctx, task.ID, status, result); uErr != nil {
+	// Record the terminal status on a fresh context, not the worker ctx: a task
+	// that finished right as shutdown cancelled ctx must still be recorded with its
+	// true outcome (not failed by the guard) — important for the never-replayed
+	// kinds (restore/delete/export/trash) where a false failure needs a manual
+	// re-request.
+	writeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if uErr := d.st.UpdateTaskStatus(writeCtx, task.ID, status, result); uErr != nil {
 		jobEvent().Warn("failed to record task status", "task", task.ID, "error", uErr.Error())
-		return // leave completed=false so the guard marks it failed via a fresh ctx
+		return // leave completed=false so the guard marks it failed
 	}
 	completed = true
 }

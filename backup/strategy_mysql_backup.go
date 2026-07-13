@@ -39,7 +39,7 @@ func preBackupMysql(vol *types.Volume, event *progress) bool {
 
 		if err != nil {
 			backupLogger().Warn("Failed to create backup container", "error", err.Error())
-			go event.PostEventUpdate("agent-45b31fb5d2814cd8", "Failed to create backup container: "+err.Error())
+			event.PostEventUpdate("agent-45b31fb5d2814cd8", "Failed to create backup container: "+err.Error())
 			return false
 		}
 	}
@@ -66,14 +66,18 @@ func postBackupMysql(event *progress, repo *borg.Repository) bool {
 	postBackupCmd = append(postBackupCmd, "rm -rf", "/mnt/data/backups")
 	execCmd = append(execCmd, "sh", "-c", strings.Join(postBackupCmd, " "))
 
-	exitCode, _, err := repo.Container.Exec(execCmd)
+	exitCode, out, err := repo.Container.Exec(execCmd)
 
 	if err != nil {
-		go event.PostEventUpdate("agent-eb2b4ef10b08d3d5", err.Error())
+		event.PostEventUpdate("agent-eb2b4ef10b08d3d5", withOutput(err.Error(), out))
+		return false
+	}
+	if exitCode > 0 {
+		event.PostEventUpdate("agent-eb2b4ef10b08d3d5", withOutput("postBackupMysql cleanup returned a non-zero exit code", out))
 		return false
 	}
 
-	return exitCode == 0
+	return true
 }
 
 /*
@@ -97,17 +101,17 @@ func isMysqlReady(backupContainer *containermgr.Container, mysqlMaster *MysqlIns
 
 	execCmd = append(execCmd, "bash", "-c", strings.Join(readyCmd, " "))
 
-	exitCode, _, err := backupContainer.Exec(execCmd)
+	exitCode, out, err := backupContainer.Exec(execCmd)
 
 	if err != nil {
 		backupLogger().Warn("Failed to create backup container exec", "error", err.Error())
-		go event.PostEventUpdate("agent-a3171394f4f28d20", "Failed run isMysqlReady check command: "+err.Error())
+		event.PostEventUpdate("agent-a3171394f4f28d20", withOutput("Failed run isMysqlReady check command: "+err.Error(), out))
 		return false
 	}
 
 	if exitCode > 0 {
 		backupLogger().Warn("Failed to run isMysqlReady command", "exitCode", exitCode, "commands", strings.Join(readyCmd, " "))
-		go event.PostEventUpdate("agent-b3dae7aba0783df4", "Failed to complete preBackupMysql Job. Halted during isMysqlReady.")
+		event.PostEventUpdate("agent-b3dae7aba0783df4", withOutput("Failed to complete preBackupMysql Job. Halted during isMysqlReady.", out))
 		return false
 	}
 
@@ -145,17 +149,17 @@ func backupMysql(backupContainer *containermgr.Container, mysqlMaster *MysqlInst
 		backupCmd = append(backupCmd, "--kill-long-queries-timeout="+mariaLongTimeout)
 	}
 
-	exitCode, _, err := backupContainer.Exec(backupCmd)
+	exitCode, out, err := backupContainer.Exec(backupCmd)
 
 	if err != nil {
 		backupLogger().Warn("Failed to run backupMysql", "error", err.Error())
-		go event.PostEventUpdate("agent-2d2e814ec98a57d4", "Failed to run backup mysql: "+err.Error())
+		event.PostEventUpdate("agent-2d2e814ec98a57d4", withOutput("Failed to run backup mysql: "+err.Error(), out))
 		return false
 	}
 
 	if exitCode > 0 {
 		backupLogger().Warn("Failed to run backupMysql Job", "exitCode", exitCode, "commands", strings.Join(backupCmd, " "))
-		go event.PostEventUpdate("agent-40840727428848c7", "Failed to run preBackupMysql Job due to backupMysql error.")
+		event.PostEventUpdate("agent-40840727428848c7", withOutput("Failed to run preBackupMysql Job due to backupMysql error.", out))
 		return false
 	}
 
@@ -177,17 +181,17 @@ func prepareMysqlBackup(backupContainer *containermgr.Container, mysqlMaster *My
 
 	backupPrepareCmd = append(backupPrepareCmd, backupBinary, "--prepare", "--target-dir="+mysqlMaster.DataPath+"/backups")
 
-	exitCode, _, err := backupContainer.Exec(backupPrepareCmd)
+	exitCode, out, err := backupContainer.Exec(backupPrepareCmd)
 
 	if err != nil {
 		backupLogger().Warn("Failed to run prepareMysqlBackup", "error", err.Error())
-		go event.PostEventUpdate("agent-7dfa6f8829fb8c7e", "Failed to prepare mysql backup: "+err.Error())
+		event.PostEventUpdate("agent-7dfa6f8829fb8c7e", withOutput("Failed to prepare mysql backup: "+err.Error(), out))
 		return false
 	}
 
 	if exitCode > 0 {
 		backupLogger().Warn("Failed to run backupMysql Job", "exitCode", exitCode, "commands", strings.Join(backupPrepareCmd, " "))
-		go event.PostEventUpdate("agent-2fe3bce7adbb0f58", "Failed to run prepareMysqlBackup Job due to backupMysql error.")
+		event.PostEventUpdate("agent-2fe3bce7adbb0f58", withOutput("Failed to run prepareMysqlBackup Job due to backupMysql error.", out))
 		return false
 	}
 

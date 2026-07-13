@@ -44,7 +44,7 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *progress, allo
 	if err != nil {
 		backupLogger().Warn("Failed to load MySQL Master", "error", err.Error(), "function", "loadMysqlMaster", "action", "FindRunningContainer", "serviceID", serviceID)
 		if event != nil {
-			go event.PostEventUpdate("agent-6e0d0cbb268ac0b1", "Container appears to be offline. Unable to perform backup.")
+			event.PostEventUpdate("agent-6e0d0cbb268ac0b1", "Container appears to be offline. Unable to perform backup.")
 			event.EventLog.Status = "cancelled"
 		}
 		return &MysqlInstance{}, err
@@ -120,7 +120,7 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *progress, allo
 	if versionStage == "" {
 		backupLogger().Warn("Failed to identify MySQL Version", "error", "version string is blank", "function", "loadMysqlMaster", "serviceID", serviceID)
 		if event != nil {
-			go event.PostEventUpdate("agent-f422717152297b23", "Unable to load MySQL Version, halting job.")
+			event.PostEventUpdate("agent-f422717152297b23", "Unable to load MySQL Version, halting job.")
 			event.EventLog.Status = "failed"
 		}
 		return &instance, errors.New("missing version string")
@@ -141,7 +141,7 @@ func loadMysqlMaster(cli *client.Client, serviceID string, event *progress, allo
 	if vErr != nil {
 		backupLogger().Warn("Failed to identify MySQL Version", "error", vErr.Error(), "function", "loadMysqlMaster", "serviceID", serviceID)
 		if event != nil {
-			go event.PostEventUpdate("agent-114697045cd756da", "Unable to load MySQL Version, halting job.\n\n"+vErr.Error())
+			event.PostEventUpdate("agent-114697045cd756da", "Unable to load MySQL Version, halting job.\n\n"+vErr.Error())
 			event.EventLog.Status = "failed"
 		}
 		return &instance, vErr

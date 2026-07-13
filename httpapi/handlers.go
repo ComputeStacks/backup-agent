@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 
 	"cs-agent/store"
@@ -406,13 +407,13 @@ func (s *Server) handleAdminChangelogAck(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, http.StatusOK, changelogAckResponse{Acked: acked})
 }
 
-// --- Group 2 DOWN desired-state + task dispatch (v2.2.0 scaffold) -------------
+// --- DOWN desired-state + task dispatch (Consul retirement) -------------------
 //
 // These admin endpoints let the controller submit node desired-state (firewall
-// rules, volume config) and tasks DOWN, persisting to control.db + the changelog.
-// In v2.2.0 nothing consumes them yet (dispatch/render/schedule still read
-// Consul; the cutover.* flags default false); they exist so the controller can
-// integrate against a real surface before each coordinated cutover.
+// rules, volume config) and tasks DOWN. Each persists to control.db + the
+// changelog and wakes the matching in-process consumer via a reconcile hook
+// (Config.On*): a POSTed task wakes the dispatcher; a firewall/volume write wakes
+// the firewall reconciler / the scheduler.
 
 // taskCreateRequest is the body of POST /v1/admin/tasks. The controller supplies
 // the task id (the jid) so a retried POST is idempotent — CreateTask dedups on it
@@ -435,9 +436,9 @@ type taskCreateResponse struct {
 	Created bool   `json:"created"`
 }
 
-// handleAdminTaskCreate records a controller-submitted task. It only persists the
-// row + its changelog entry in v2.2.0; the in-process dispatcher that runs it is
-// wired in v2.3.0 behind cutover.tasks.
+// handleAdminTaskCreate records a controller-submitted task (row + changelog) and
+// wakes the in-process dispatcher to claim + run it. Idempotent on the task id, so
+// a retried POST never re-dispatches.
 func (s *Server) handleAdminTaskCreate(w http.ResponseWriter, r *http.Request, _ scope) {
 	body, ok := s.readBody(w, r)
 	if !ok {
@@ -565,15 +566,32 @@ func (s *Server) handleAdminVolumePut(w http.ResponseWriter, r *http.Request, _ 
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleAdminVolumeDelete removes a volume's desired-state (idempotent no-op if
-// absent).
+// handleAdminVolumeDelete removes a volume's desired-state. It FIRST enqueues a
+// volume.trash teardown task (destroy the borg repository + stop the backup
+// container), then removes the row — so a DELETE can never orphan the repository
+// on disk, even if the controller DELETEs directly instead of first PUTting the
+// volume with trash=true. The stable task id makes this idempotent with the
+// scheduler's own trash enqueue (a still-present prior trash task is not
+// duplicated). Idempotent no-op on the row if already absent.
 func (s *Server) handleAdminVolumeDelete(w http.ResponseWriter, r *http.Request, _ scope) {
 	projectID := r.PathValue("project_id")
 	name := r.PathValue("name")
+	hostname, _ := os.Hostname()
+	if _, err := s.store.CreateTask(r.Context(), store.Task{
+		ID:        "volume.trash:" + name,
+		Name:      "volume.trash",
+		Node:      hostname,
+		Volume:    name,
+		ProjectID: projectID,
+	}); err != nil {
+		s.storeError(w, err, "enqueue volume teardown")
+		return
+	}
 	if err := s.store.DeleteVolume(r.Context(), name, projectID); err != nil {
 		s.storeError(w, err, "delete volume")
 		return
 	}
+	s.fireHook(s.cfg.OnTaskCreated)    // wake the dispatcher to run the teardown
 	s.fireHook(s.cfg.OnVolumesChanged) // wake the scheduler reconciler
 	w.WriteHeader(http.StatusOK)
 }

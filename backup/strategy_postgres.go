@@ -14,7 +14,7 @@ func preBackupPostgres(vol *types.Volume, event *progress) (preBackupPostgresSuc
 	cli, err := client.NewClientWithOpts(client.WithVersion(viper.GetString("docker.version")))
 	if err != nil {
 		backupLogger().Warn("Docker error preBackupPostgres", "error", err.Error())
-		go event.PostEventUpdate("agent-88a614c7c22772e5", "Fatal error connecting to docker for preBackupPostgres Job")
+		event.PostEventUpdate("agent-88a614c7c22772e5", "Fatal error connecting to docker for preBackupPostgres Job")
 		return false
 	}
 	c, err := containermgr.FindByService(cli, strconv.Itoa(vol.ServiceID), false)
@@ -23,11 +23,16 @@ func preBackupPostgres(vol *types.Volume, event *progress) (preBackupPostgresSuc
 	if err != nil {
 		return true
 	}
-	exitCode, _, err := c.Exec([]string{"psql", "-U", "postgres", "-c", "checkpoint;"})
+	exitCode, out, err := c.Exec([]string{"psql", "-U", "postgres", "-c", "checkpoint;"})
+	if err != nil {
+		backupLogger().Warn("Failed to run preBackupPostgres exec", "error", err.Error())
+		event.PostEventUpdate("agent-dc7bfd8aa3bb1042", withOutput("Failed to run preBackupPostgres Job: "+err.Error(), out))
+		return false
+	}
 
 	if exitCode > 0 {
 		backupLogger().Warn("Failed to run preBackupPostgres Job", "exitCode", exitCode)
-		go event.PostEventUpdate("agent-dc7bfd8aa3bb1042", "Failed to run preBackupPostgres Job")
+		event.PostEventUpdate("agent-dc7bfd8aa3bb1042", withOutput("Failed to run preBackupPostgres Job", out))
 		return false
 	}
 

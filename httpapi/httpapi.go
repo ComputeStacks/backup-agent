@@ -66,9 +66,9 @@ type Store interface {
 	SetChangelogAcked(ctx context.Context, seq int64) error
 	GetChangelogAcked(ctx context.Context) (int64, error)
 
-	// Group 2 (Consul retirement) DOWN desired-state + task dispatch. v2.2.0
-	// scaffolds these endpoints; the agent-side consumers (dispatcher, firewall
-	// renderer, scheduler) switch onto them in later increments behind cutover.*.
+	// DOWN desired-state + task dispatch (Consul retirement). The in-process
+	// consumers (dispatcher, firewall reconciler, scheduler) read these tables; the
+	// DOWN handlers wake them via the Config.On* reconcile hooks.
 	CreateTask(ctx context.Context, t store.Task) (created bool, err error)
 	CancelPendingTask(ctx context.Context, id string) (cancelled bool, err error)
 	PutVolume(ctx context.Context, v store.Volume) error
@@ -230,9 +230,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/admin/changelog/ack", s.requireAdmin(s.handleAdminChangelogAck))
 
 	// --- Controller DOWN desired-state + task dispatch (per-node admin Bearer) ---
-	// v2.2.0 scaffold: these persist to control.db + the changelog; no agent
-	// consumer/dispatch/render is wired to them yet (cutover.* default false), so
-	// they are behaviorally inert until each coordinated cutover.
+	// Each persists to control.db + the changelog and wakes the matching in-process
+	// consumer (dispatcher / firewall reconciler / scheduler) via a reconcile hook.
 	s.mux.HandleFunc("POST /v1/admin/tasks", s.requireAdmin(s.handleAdminTaskCreate))
 	s.mux.HandleFunc("DELETE /v1/admin/tasks/{id}", s.requireAdmin(s.handleAdminTaskCancel))
 	s.mux.HandleFunc("PUT /v1/admin/nodes/{host}/firewall_rules", s.requireAdmin(s.handleAdminFirewallPut))
