@@ -135,6 +135,38 @@ func TestAdminVolumePutDelete(t *testing.T) {
 	mustStatus(t, resp, http.StatusOK)
 }
 
+func TestAdminChangelogAck(t *testing.T) {
+	e := newTestEnv(t)
+
+	resp := e.do("POST", "/v1/admin/changelog/ack", e.adminTok, []byte(`{"seq":5}`))
+	mustStatus(t, resp, http.StatusOK)
+	var ack changelogAckResponse
+	if err := json.Unmarshal(readBody(t, resp), &ack); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if ack.Acked != 5 {
+		t.Fatalf("acked = %d, want 5", ack.Acked)
+	}
+
+	// A lower/duplicate ack is accepted but must not rewind the monotonic watermark.
+	resp = e.do("POST", "/v1/admin/changelog/ack", e.adminTok, []byte(`{"seq":3}`))
+	mustStatus(t, resp, http.StatusOK)
+	if err := json.Unmarshal(readBody(t, resp), &ack); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if ack.Acked != 5 {
+		t.Fatalf("acked = %d after rewind attempt, want 5", ack.Acked)
+	}
+
+	// Validation: bad JSON and negative seq are 400.
+	mustStatus(t, e.do("POST", "/v1/admin/changelog/ack", e.adminTok, []byte(`{`)), http.StatusBadRequest)
+	mustStatus(t, e.do("POST", "/v1/admin/changelog/ack", e.adminTok, []byte(`{"seq":-1}`)), http.StatusBadRequest)
+
+	// Admin-scoped: a tenant Bearer is rejected 403.
+	e.provisionTenant("proj-a", "tok-a", "active")
+	mustStatus(t, e.do("POST", "/v1/admin/changelog/ack", "tok-a", []byte(`{"seq":1}`)), http.StatusForbidden)
+}
+
 // TestAdminGroup2Routes_RequireAdmin proves the DOWN endpoints are admin-scoped:
 // a valid tenant Bearer (wrong scope) is rejected 403.
 func TestAdminGroup2Routes_RequireAdmin(t *testing.T) {

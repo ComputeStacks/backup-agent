@@ -363,6 +363,49 @@ func (s *Server) handleAdminChangelogList(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, changelogListResponse{Entries: entries})
 }
 
+// changelogAckRequest is the body of POST /v1/admin/changelog/ack: the highest seq
+// the single per-node consumer has durably projected. The watermark is monotonic —
+// a seq at or below the current value is accepted but does not rewind it.
+type changelogAckRequest struct {
+	Seq int64 `json:"seq"`
+}
+
+// changelogAckResponse echoes the resulting (monotonic) watermark, which may be
+// higher than the requested seq if a lower/duplicate ack was ignored.
+type changelogAckResponse struct {
+	Acked int64 `json:"acked"`
+}
+
+// handleAdminChangelogAck advances the controller's acked changelog watermark, the
+// low-water mark below which the prune janitor may drop rows (subject to an age
+// floor). It is how the controller reports durable projection progress so the node
+// can reclaim changelog space.
+func (s *Server) handleAdminChangelogAck(w http.ResponseWriter, r *http.Request, _ scope) {
+	body, ok := s.readBody(w, r)
+	if !ok {
+		return
+	}
+	var req changelogAckRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Seq < 0 {
+		writeError(w, http.StatusBadRequest, "seq must be >= 0")
+		return
+	}
+	if err := s.store.SetChangelogAcked(r.Context(), req.Seq); err != nil {
+		s.storeError(w, err, "set changelog acked")
+		return
+	}
+	acked, err := s.store.GetChangelogAcked(r.Context())
+	if err != nil {
+		s.storeError(w, err, "get changelog acked")
+		return
+	}
+	writeJSON(w, http.StatusOK, changelogAckResponse{Acked: acked})
+}
+
 // --- Group 2 DOWN desired-state + task dispatch (v2.2.0 scaffold) -------------
 //
 // These admin endpoints let the controller submit node desired-state (firewall

@@ -63,6 +63,8 @@ type Store interface {
 
 	CreateActionRequest(ctx context.Context, id, projectID, actionType string, params json.RawMessage) (store.ActionRequest, error)
 	ChangelogSince(ctx context.Context, since int64, entityType string, limit int) ([]store.ChangelogEntry, error)
+	SetChangelogAcked(ctx context.Context, seq int64) error
+	GetChangelogAcked(ctx context.Context) (int64, error)
 
 	// Group 2 (Consul retirement) DOWN desired-state + task dispatch. v2.2.0
 	// scaffolds these endpoints; the agent-side consumers (dispatcher, firewall
@@ -216,6 +218,7 @@ func (s *Server) routes() {
 
 	// --- Controller pull channel for the changelog (per-node admin Bearer) ---
 	s.mux.HandleFunc("GET /v1/admin/changelog", s.requireAdmin(s.handleAdminChangelogList))
+	s.mux.HandleFunc("POST /v1/admin/changelog/ack", s.requireAdmin(s.handleAdminChangelogAck))
 
 	// --- Controller DOWN desired-state + task dispatch (per-node admin Bearer) ---
 	// v2.2.0 scaffold: these persist to control.db + the changelog; no agent
