@@ -1,5 +1,81 @@
 # Changelog
 
+## v3.0.0
+
+Major release — **Consul is fully removed from the agent.** The embedded SQLite `control.db`
+becomes the sole coordination plane for tasks, volumes, firewall rules, borg repositories, and
+backup schedules. This completes the Consul-retirement / node-autonomy re-architecture. One
+big-bang cutover in a maintenance window (controller-off-first); coordinated with a controller
+release (see the controller repo's changelog for its side).
+
+- [CHANGE] **Consul removed.** The binary no longer links `hashicorp/consul/api` and never
+  contacts Consul. `control.db` is the source of truth for all node coordination state.
+- [CHANGE] **In-process task dispatch.** A single dispatcher goroutine drains pending tasks
+  from `control.db` with an at-most-once claim (status CAS), replacing the Consul long-poll job
+  watcher. Task kinds: `volume.backup`, `volume.restore`, `backup.delete`, `backup.export`,
+  `volume.trash`. A boot reconcile fails orphaned `running` tasks; restore/delete/export/trash
+  never auto-replay.
+- [CHANGE] **Durable backup scheduler.** A `schedules` table + tick loop fires backups
+  exactly once (with a single catch-up and no backfill storm), replacing the in-memory cron
+  runner and the Consul schedule mirror. `robfig/cron` is kept only as the cron-string parser.
+- [FEATURE] **Controller DOWN endpoints** (per-node admin Bearer): `POST /v1/admin/tasks`
+  (controller-supplied idempotent id), `PUT`/`DELETE /v1/admin/projects/{pid}/volumes/{name}`,
+  `PUT`/`DELETE /v1/admin/nodes/{host}/firewall_rules` (firewall reconciles on the PUT — there
+  is no firewall task), and `POST /v1/admin/changelog/ack`. UP state (task status + results,
+  observed repositories) rides the existing `GET /v1/admin/changelog` pull.
+- [CHANGE] **csevent retired.** The agent no longer POSTs to `/api/system/events`;
+  backup/restore/export/delete outcomes ride the task's status + `result_json` (terminal
+  outcome plus captured failure output — no live per-step stream).
+- [CHANGE] **Populate-before-enforce (no cutover outage).** On a fresh/empty node the firewall
+  and volume domains skip reconcile — leaving the live `cs_agent` nftables table and running
+  workloads untouched — until the controller backfills desired state; cross-project isolation
+  still applies. Published ports stay up across the upgrade gap.
+- [FEATURE] **Bounded control.db.** Changelog prune (ack-gated, plus an ack-independent age
+  fallback) and terminal task-row retention keep the DB bounded even before the controller
+  starts acking.
+- [REMOVED] `consul.*` config, the Consul auth proxy (`proxy_to_consul`), the `schedule_source`
+  and `cutover.*` options, and the `consul.service` dependency in the systemd unit.
+
+Migrations run additively (`control.db` schema `v1→v4`); an older binary refuses a `v4` DB via
+the schema-version guard, so downgrades require restoring a pre-upgrade snapshot.
+
+### Upgrading a node to v3.0.0
+
+Maintenance window, **controller-off-first**. The rollback anchors are a per-node `control.db`
+snapshot **and** Consul left running until the very end. No `agent.yml` changes are required —
+`metadata.admin_token_hash` (already set) authenticates the controller's DOWN writes, and any
+leftover `consul:` keys are ignored.
+
+1. **Pre-window (per node):** snapshot the DB and drain in-flight jobs. Leave Consul running.
+   ```
+   cp -a /var/lib/cs-agent/control.db /var/lib/cs-agent/control.db.pre-v3
+   ```
+2. **Stop the old controller** (once). No more Consul writes; customer containers keep running.
+3. **Install v3.0.0 on all nodes** and start. Migrations run `v1→v4`; the agent boots with
+   empty coordination tables and, sentinels unlatched, leaves the live firewall table +
+   workloads untouched.
+   ```
+   sudo apt-get update && sudo apt-get install -y cs-agent
+   ```
+4. **Boot the new controller** (once). It backfills each node (firewall rules + every volume)
+   via the DOWN endpoints. The sentinels latch and the agent reconciles: the firewall
+   re-renders the same rules, and schedules rebuild with a future `next_fire_at` (no backup
+   storm).
+5. **Verify per node:** `cs-agent -version` (v3.0.0), `control.db` at schema `v4`, firewall
+   renders (`nft list table inet cs_agent`), tasks dispatch, and task status/results flow up
+   the changelog with ack + prune working.
+6. **Tear down Consul** (per node, once confirmed) and remove it from the provisioner. The v3
+   agent has no Consul client and its unit no longer orders after `consul.service`, so this is
+   safe; the old `:8502` HTTP relocation is obsolete.
+   ```
+   sudo systemctl disable --now consul
+   ```
+
+**Rollback (until step 6, all nodes):** restore the `control.db.pre-v3` snapshot **and**
+downgrade the binary — **order matters**: an old binary against a migrated (`v4`) DB refuses to
+boot, so restore the snapshot first (or do both atomically). Consul is still live as the other
+anchor. Restart the old controller last.
+
 ## v2.1.0
 
 Adds a generic **container-action channel** and the append-only **changelog** primitive the controller
