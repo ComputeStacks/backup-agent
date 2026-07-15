@@ -3,9 +3,6 @@ Description=ComputeStacks Node Agent (cs-agent)
 Documentation=https://github.com/computestacks/node-agent
 Requires=docker.service
 After=docker.service
-# Consul is still required until coordination leaves it; drop both lines then.
-Wants=consul.service
-After=consul.service
 ConditionPathExists=/etc/computestacks/agent.yml
 # Crash-loop backstop: allow brisk restarts, but if it dies >StartLimitBurst times in
 # StartLimitIntervalSec, stop hammering. NOTE: the goal is "alert and keep
