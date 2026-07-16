@@ -55,7 +55,11 @@ func (d *Dispatcher) runTask(ctx context.Context, task store.Task) {
 	}()
 
 	jobEvent().Info("Processing task", "task", task.ID, "kind", task.Name)
-	result, err := backup.RunTask(ctx, d.st, task)
+	run := d.runner
+	if run == nil {
+		run = backup.RunTask
+	}
+	result, err := run(ctx, d.st, task)
 	status := store.TaskCompleted
 	if err != nil {
 		status = store.TaskFailed

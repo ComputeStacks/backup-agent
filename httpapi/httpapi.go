@@ -70,6 +70,7 @@ type Store interface {
 	// consumers (dispatcher, firewall reconciler, scheduler) read these tables; the
 	// DOWN handlers wake them via the Config.On* reconcile hooks.
 	CreateTask(ctx context.Context, t store.Task) (created bool, err error)
+	EnqueueTeardown(ctx context.Context, t store.Task, resetFailed bool) (enqueued bool, err error)
 	CancelPendingTask(ctx context.Context, id string) (cancelled bool, err error)
 	PutVolume(ctx context.Context, v store.Volume) error
 	DeleteVolume(ctx context.Context, name, projectID string) error

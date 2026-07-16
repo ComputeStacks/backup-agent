@@ -4,8 +4,6 @@ import (
 	"context"
 	"cs-agent/backup/borg"
 	"cs-agent/store"
-
-	"github.com/getsentry/sentry-go"
 )
 
 // Trash destroys a volume's borg repository and stops its backup container. The
@@ -15,7 +13,8 @@ import (
 // the volume's desired-state row is the controller's to delete once it observes
 // this task complete (the agent never deletes controller-owned DOWN state).
 func Trash(ctx context.Context, st *store.Store, task store.Task, projectEvent *progress) error {
-	defer sentry.Recover()
+	// No handler-level sentry.Recover(): let a panic reach the worker terminal
+	// guard so a crashed teardown is FAILED (never a false "completed").
 	repo := borg.Repository{Name: task.Volume, SourceVolumeName: task.Volume, Store: st}
 	if _, err := repo.Delete(); err != nil {
 		projectEvent.EventLog.Status = "failed"

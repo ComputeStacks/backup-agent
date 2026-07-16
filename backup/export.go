@@ -62,7 +62,8 @@ var objectKeyUnsafe = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
 // and the upload succeeded. A crashed export is left "running" by the worker and
 // failed by the boot crash-reconcile — never blindly re-run.
 func ExportBackup(ctx context.Context, st *store.Store, task store.Task, projectEvent *progress) error {
-	defer sentry.Recover()
+	// No handler-level sentry.Recover(): let a panic reach the worker terminal
+	// guard so a crashed export is FAILED (never a false "completed").
 	hostname, _ := os.Hostname()
 
 	v, found, err := st.GetVolume(ctx, task.Volume)

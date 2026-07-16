@@ -25,6 +25,9 @@ func prune(ctx context.Context, st *store.Store) {
 	}
 
 	for _, sv := range vols {
+		if ctx.Err() != nil { // stop the sweep promptly on shutdown
+			return
+		}
 		vol, err := types.LoadVolume(sv.Config)
 		if err != nil {
 			backupLogger().Warn("Prune: error parsing volume", "volume", sv.Name, "error", err.Error())

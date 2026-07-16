@@ -570,20 +570,21 @@ func (s *Server) handleAdminVolumePut(w http.ResponseWriter, r *http.Request, _ 
 // volume.trash teardown task (destroy the borg repository + stop the backup
 // container), then removes the row — so a DELETE can never orphan the repository
 // on disk, even if the controller DELETEs directly instead of first PUTting the
-// volume with trash=true. The stable task id makes this idempotent with the
-// scheduler's own trash enqueue (a still-present prior trash task is not
-// duplicated). Idempotent no-op on the row if already absent.
+// volume with trash=true. EnqueueTeardown with resetFailed=true means a re-DELETE
+// after a transiently-failed teardown retries it (a still-pending/running one is
+// not duplicated; a completed one is a no-op). Idempotent no-op on the row if
+// already absent.
 func (s *Server) handleAdminVolumeDelete(w http.ResponseWriter, r *http.Request, _ scope) {
 	projectID := r.PathValue("project_id")
 	name := r.PathValue("name")
 	hostname, _ := os.Hostname()
-	if _, err := s.store.CreateTask(r.Context(), store.Task{
+	if _, err := s.store.EnqueueTeardown(r.Context(), store.Task{
 		ID:        "volume.trash:" + name,
 		Name:      "volume.trash",
 		Node:      hostname,
 		Volume:    name,
 		ProjectID: projectID,
-	}); err != nil {
+	}, true); err != nil {
 		s.storeError(w, err, "enqueue volume teardown")
 		return
 	}

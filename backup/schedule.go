@@ -17,6 +17,8 @@ import (
 	"cs-agent/types"
 	"os"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/getsentry/sentry-go"
@@ -36,15 +38,17 @@ type Scheduler struct {
 	tick        time.Duration
 	reconcileCh chan struct{}
 	maint       []*maintJob
+	maintWg     sync.WaitGroup // tracks in-flight maintenance goroutines
 }
 
 // maintJob is a node-wide maintenance task on a cron schedule with skip-on-misfire
 // (next-fire held in RAM; a node down over a slot simply skips it).
 type maintJob struct {
-	name string
-	expr string
-	next time.Time
-	run  func(ctx context.Context)
+	name    string
+	expr    string
+	next    time.Time
+	run     func(ctx context.Context)
+	running atomic.Bool // true while a run is in flight (overlap guard)
 }
 
 // NewScheduler builds the scheduler. dispatch is called (non-blocking) after a
@@ -78,6 +82,9 @@ func (s *Scheduler) ReconcileSignal() {
 // Run drives the scheduler until ctx is cancelled.
 func (s *Scheduler) Run(ctx context.Context) {
 	backupLogger().Info("Starting backup scheduler")
+	// Drain any in-flight maintenance goroutines before returning, so nothing
+	// touches the store after main proceeds to store.Close() on shutdown.
+	defer s.maintWg.Wait()
 	now := time.Now()
 	for _, m := range s.maint {
 		if m.expr != "" {
@@ -159,7 +166,11 @@ func (s *Scheduler) fireDue(ctx context.Context) {
 }
 
 // runMaintenance runs any node maintenance job whose cron slot has passed
-// (skip-on-misfire: next is always recomputed from now, never replayed).
+// (skip-on-misfire: next is always recomputed from now, never replayed). Each due
+// job runs in its OWN goroutine so a long prune/compact (incl. its jitter sleep)
+// never blocks backup firing or reconcile on the tick loop; an overlap guard skips
+// a job whose prior run is still in flight, and maintWg lets Run drain them on
+// shutdown before the store closes.
 func (s *Scheduler) runMaintenance(ctx context.Context) {
 	now := time.Now()
 	for _, m := range s.maint {
@@ -170,10 +181,20 @@ func (s *Scheduler) runMaintenance(ctx context.Context) {
 			m.next = nextFire(m.expr, now)
 			continue
 		}
-		if !now.Before(m.next) {
-			m.run(ctx)
-			m.next = nextFire(m.expr, now)
+		if now.Before(m.next) {
+			continue
 		}
+		m.next = nextFire(m.expr, now)
+		if !m.running.CompareAndSwap(false, true) {
+			backupLogger().Warn("Scheduler: skipping maintenance; previous run still in progress", "job", m.name)
+			continue
+		}
+		s.maintWg.Add(1)
+		go func(m *maintJob) {
+			defer s.maintWg.Done()
+			defer m.running.Store(false)
+			m.run(ctx)
+		}(m)
 	}
 }
 
@@ -236,16 +257,22 @@ func (s *Scheduler) reconcile(ctx context.Context) {
 		seen[vol.Name] = true
 
 		if vol.Trash {
-			// Enqueue teardown once (stable id => idempotent) and stop scheduling.
-			if _, err := s.st.CreateTask(ctx, store.Task{
+			// Enqueue teardown once and stop scheduling. resetFailed=false: a
+			// lingering trash:true row (the controller hasn't DELETEd it yet) must
+			// NOT re-run a failed teardown every tick — only an explicit controller
+			// re-DELETE retries. EnqueueTeardown reads before writing, so a
+			// pending/running/completed/failed row is a cheap no-op (no write tx,
+			// no dispatcher poke).
+			enq, err := s.st.EnqueueTeardown(ctx, store.Task{
 				ID:        "volume.trash:" + vol.Name,
 				Name:      "volume.trash",
 				Node:      s.hostname,
 				Volume:    vol.Name,
 				ProjectID: strconv.Itoa(vol.ProjectID),
-			}); err != nil {
+			}, false)
+			if err != nil {
 				backupLogger().Warn("Scheduler: enqueue trash", "volume", vol.Name, "error", err.Error())
-			} else {
+			} else if enq {
 				trashed = true
 			}
 			_ = s.st.DeleteSchedule(ctx, vol.Name)

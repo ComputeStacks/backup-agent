@@ -237,6 +237,78 @@ func (s *Store) CancelPendingTask(ctx context.Context, id string) (cancelled boo
 	return cancelled, err
 }
 
+// EnqueueTeardown idempotently enqueues a volume.trash teardown task keyed by the
+// caller-supplied stable id ("volume.trash:<name>"). Plain CreateTask (ON CONFLICT
+// DO NOTHING) would tombstone a prior terminal attempt, so this inspects the
+// existing row:
+//   - absent          -> insert a pending task (enqueued=true)
+//   - pending/running -> no-op (a teardown is already in flight)
+//   - completed       -> no-op (already torn down)
+//   - failed          -> if resetFailed, reset to pending + re-dispatch (enqueued=true);
+//                        otherwise no-op.
+//
+// resetFailed=true is for the controller-driven DELETE path (an explicit re-request
+// retries a transiently-failed teardown). resetFailed=false is for the scheduler
+// reconcile path: a lingering trash:true row must NOT re-run a failed teardown on
+// every tick (that would be a tick-rate retry loop).
+func (s *Store) EnqueueTeardown(ctx context.Context, t Task, resetFailed bool) (enqueued bool, err error) {
+	if t.ID == "" || t.Name == "" || t.Node == "" {
+		return false, errors.New("store: EnqueueTeardown requires id, name, node")
+	}
+	now := time.Now().Unix()
+	err = s.withControlTx(ctx, func(tx *sql.Tx) error {
+		existing, gErr := getTaskTx(ctx, tx, t.ID)
+		switch {
+		case errors.Is(gErr, sql.ErrNoRows):
+			t.Status = TaskPending
+			t.CreatedAt = now
+			t.UpdatedAt = now
+			snapshot, mErr := json.Marshal(t)
+			if mErr != nil {
+				return fmt.Errorf("store: marshal task %q: %w", t.ID, mErr)
+			}
+			enqueued, err = insertTaskTx(ctx, tx, t, snapshot)
+			return err
+		case gErr != nil:
+			return fmt.Errorf("store: get task %q: %w", t.ID, gErr)
+		}
+		// A row exists: only a failed row with resetFailed is re-activated.
+		if !(resetFailed && existing.Status == TaskFailed) {
+			return nil
+		}
+		res, uErr := tx.ExecContext(ctx,
+			`UPDATE tasks SET status = ?, result_json = NULL, updated_at = ? WHERE id = ? AND status = ?`,
+			TaskPending, now, t.ID, TaskFailed)
+		if uErr != nil {
+			return fmt.Errorf("store: reset teardown %q: %w", t.ID, uErr)
+		}
+		n, aErr := res.RowsAffected()
+		if aErr != nil {
+			return fmt.Errorf("store: task %q rows affected: %w", t.ID, aErr)
+		}
+		if n == 0 {
+			return nil // raced to non-failed: leave it
+		}
+		reloaded, rErr := getTaskTx(ctx, tx, t.ID)
+		if rErr != nil {
+			return fmt.Errorf("store: reload task %q: %w", t.ID, rErr)
+		}
+		snapshot, mErr := json.Marshal(reloaded)
+		if mErr != nil {
+			return fmt.Errorf("store: marshal task %q: %w", t.ID, mErr)
+		}
+		if cErr := appendChangelogTx(ctx, tx, "task", reloaded.ID, reloaded.ProjectID, "upsert", snapshot, now); cErr != nil {
+			return cErr
+		}
+		enqueued = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return enqueued, nil
+}
+
 // GetTask returns a task by id. found=false on a miss (not an error).
 func (s *Store) GetTask(ctx context.Context, id string) (Task, bool, error) {
 	t, err := scanTask(s.control.QueryRowContext(ctx, `SELECT `+taskColumns+` FROM tasks WHERE id = ?`, id))

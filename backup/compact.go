@@ -25,7 +25,11 @@ func compact(ctx context.Context, st *store.Store) {
 	// compacting at the same cron minute. Deterministic (hostname-derived) for
 	// even spread and reproducibility.
 	if jitter := viper.GetInt("backups.compact_jitter_sec"); jitter > 0 {
-		time.Sleep(jitterDelay(hostname, jitter))
+		select {
+		case <-time.After(jitterDelay(hostname, jitter)):
+		case <-ctx.Done(): // ctx-aware: don't hold up shutdown during the jitter sleep
+			return
+		}
 	}
 
 	vols, err := st.ListVolumesByNode(ctx, hostname)
@@ -36,6 +40,9 @@ func compact(ctx context.Context, st *store.Store) {
 	}
 
 	for _, sv := range vols {
+		if ctx.Err() != nil { // stop the sweep promptly on shutdown
+			return
+		}
 		vol, err := types.LoadVolume(sv.Config)
 		if err != nil {
 			backupLogger().Warn("Compact: error parsing volume", "volume", sv.Name, "error", err.Error())

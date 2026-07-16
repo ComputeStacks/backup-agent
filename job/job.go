@@ -31,6 +31,9 @@ type Dispatcher struct {
 	signal        chan struct{}
 	backupWorkers int
 	exportWorkers int
+	// runner executes a task; nil means backup.RunTask (the production path).
+	// Overridable in tests to exercise the worker's terminal guard directly.
+	runner func(context.Context, *store.Store, store.Task) (json.RawMessage, error)
 }
 
 // NewDispatcher builds the dispatcher (unbuffered worker queues sized by config).

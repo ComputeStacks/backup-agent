@@ -16,7 +16,8 @@ import (
 )
 
 func Restore(ctx context.Context, st *store.Store, task store.Task, projectEvent *progress) error {
-	defer sentry.Recover()
+	// No handler-level sentry.Recover(): let a panic reach the worker terminal
+	// guard so a crashed restore is FAILED (never a false "completed").
 	hostname, _ := os.Hostname()
 	params := parseParams(task)
 

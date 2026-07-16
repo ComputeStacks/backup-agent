@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -121,6 +122,80 @@ func TestScheduler_FireDue(t *testing.T) {
 	sc, _, _ := st.GetSchedule(ctx, "v1")
 	if sc.NextFireAt <= time.Now().Unix() {
 		t.Fatalf("next_fire_at = %d not advanced past now", sc.NextFireAt)
+	}
+}
+
+// TestScheduler_MaintenanceRunsOffLoop proves the M1 fix: a due maintenance job
+// runs in its own goroutine (so a long prune/compact + jitter can't block backup
+// firing), and an overlap guard skips a second run while the first is in flight.
+func TestScheduler_MaintenanceRunsOffLoop(t *testing.T) {
+	st := testStore(t)
+	s := newTestScheduler(t, st)
+
+	release := make(chan struct{})
+	started := make(chan struct{}, 2)
+	var runs atomic.Int32
+	job := &maintJob{
+		name: "blocker",
+		expr: "* * * * *",
+		next: time.Now().Add(-time.Minute), // due now
+		run: func(ctx context.Context) {
+			runs.Add(1)
+			started <- struct{}{}
+			<-release // hold the job "in flight"
+		},
+	}
+	s.maint = []*maintJob{job}
+
+	// runMaintenance must return promptly even though the job blocks.
+	done := make(chan struct{})
+	go func() { s.runMaintenance(context.Background()); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runMaintenance blocked on a long maintenance job (not run off-loop)")
+	}
+	<-started // the job goroutine is running
+
+	// Overlap guard: make it due again; a second pass must not start a 2nd run.
+	job.next = time.Now().Add(-time.Minute)
+	s.runMaintenance(context.Background())
+	select {
+	case <-started:
+		t.Fatal("overlapping maintenance run started while the previous was in flight")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(release) // let the first run finish
+	s.maintWg.Wait()
+	if runs.Load() != 1 {
+		t.Fatalf("maintenance ran %d times, want 1 (overlap guarded)", runs.Load())
+	}
+}
+
+// TestScheduler_ReconcileDoesNotRetryFailedTrash proves the M2/defect-#1 fix: a
+// lingering trash:true volume whose teardown task already FAILED is not re-run by
+// reconcile every tick (resetFailed=false).
+func TestScheduler_ReconcileDoesNotRetryFailedTrash(t *testing.T) {
+	ctx := context.Background()
+	st := testStore(t)
+	s := newTestScheduler(t, st)
+
+	putVol(t, st, types.Volume{Name: "v1", Node: "test-node", Backup: true, Freq: "0 2 * * *", Trash: true, ProjectID: 7})
+	s.reconcile(ctx) // enqueues volume.trash:v1 (pending)
+	if _, found, _ := st.GetTask(ctx, "volume.trash:v1"); !found {
+		t.Fatal("trash task not enqueued")
+	}
+	// Simulate the teardown failing.
+	if err := st.UpdateTaskStatus(ctx, "volume.trash:v1", store.TaskFailed, nil); err != nil {
+		t.Fatal(err)
+	}
+	// The trash:true row still lingers (controller hasn't DELETEd it) → reconcile
+	// must NOT reset the failed task back to pending.
+	s.reconcile(ctx)
+	tk, _, _ := st.GetTask(ctx, "volume.trash:v1")
+	if tk.Status != store.TaskFailed {
+		t.Fatalf("status = %q, want failed (reconcile must not retry a failed teardown)", tk.Status)
 	}
 }
 

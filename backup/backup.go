@@ -24,7 +24,9 @@ import (
 // writeback). Soft failures are reported via projectEvent.EventLog.Status; the
 // worker marks the task failed and stores the accumulated output.
 func Perform(ctx context.Context, st *store.Store, task store.Task, projectEvent *progress) error {
-	defer sentry.Recover()
+	// NOTE: no handler-level sentry.Recover() here — a panic must propagate to the
+	// worker's terminal guard (job/worker.go) so the task is marked FAILED, not
+	// silently recovered into a false "completed". The guard reports to Sentry.
 	hostname, _ := os.Hostname()
 
 	v, found, err := st.GetVolume(ctx, task.Volume)
