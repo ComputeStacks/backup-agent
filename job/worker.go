@@ -72,7 +72,15 @@ func (d *Dispatcher) runTask(ctx context.Context, task store.Task) {
 	// re-request.
 	writeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if uErr := d.st.UpdateTaskStatus(writeCtx, task.ID, status, result); uErr != nil {
+	uErr := d.st.UpdateTaskStatus(writeCtx, task.ID, status, result)
+	if uErr != nil {
+		// One retry: a transient control.db write failure must not turn a real
+		// success into a false failure on the never-replay kinds (restore/export/
+		// delete/trash), where the guard's fallback would need a manual re-request.
+		jobEvent().Warn("record task status failed; retrying once", "task", task.ID, "error", uErr.Error())
+		uErr = d.st.UpdateTaskStatus(writeCtx, task.ID, status, result)
+	}
+	if uErr != nil {
 		jobEvent().Warn("failed to record task status", "task", task.ID, "error", uErr.Error())
 		return // leave completed=false so the guard marks it failed
 	}

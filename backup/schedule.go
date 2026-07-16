@@ -65,8 +65,10 @@ func NewScheduler(st *store.Store, dispatch func()) *Scheduler {
 	s.maint = []*maintJob{
 		{name: "prune", expr: viper.GetString("backups.prune_freq"), run: func(ctx context.Context) { prune(ctx, st) }},
 		{name: "compact", expr: viper.GetString("backups.compact_freq"), run: func(ctx context.Context) { compact(ctx, st) }},
-		{name: "housekeeping", expr: viper.GetString("changelog.prune_freq"), run: s.housekeeping},
 	}
+	// NB: changelog/task-retention housekeeping is NOT a maint job here — it runs
+	// unconditionally via backup.Housekeeper (main.go), independent of
+	// backups.enabled, so a backups-disabled node still bounds control.db growth.
 	return s
 }
 
@@ -87,8 +89,15 @@ func (s *Scheduler) Run(ctx context.Context) {
 	defer s.maintWg.Wait()
 	now := time.Now()
 	for _, m := range s.maint {
-		if m.expr != "" {
-			m.next = nextFire(m.expr, now)
+		if m.expr == "" {
+			backupLogger().Warn("Maintenance job has no cron; disabled", "job", m.name)
+			continue
+		}
+		m.next = nextFire(m.expr, now)
+		if m.next.IsZero() {
+			backupLogger().Warn("Maintenance job cron unparseable; will not run", "job", m.name, "cron", m.expr)
+		} else {
+			backupLogger().Info("Maintenance scheduled", "job", m.name, "cron", m.expr)
 		}
 	}
 	s.reconcile(ctx) // boot rebuild
@@ -195,26 +204,6 @@ func (s *Scheduler) runMaintenance(ctx context.Context) {
 			defer m.running.Store(false)
 			m.run(ctx)
 		}(m)
-	}
-}
-
-// housekeeping prunes acked/aged changelog rows and reaps terminal task rows.
-func (s *Scheduler) housekeeping(ctx context.Context) {
-	defer sentry.Recover()
-	now := time.Now().Unix()
-	minAge := int64(viper.GetInt("changelog.prune_min_age_sec"))
-	maxAge := int64(viper.GetInt("changelog.prune_max_age_sec"))
-	if n, err := s.st.PruneChangelog(ctx, now, minAge, maxAge); err != nil {
-		backupLogger().Warn("Scheduler: changelog prune", "error", err.Error())
-	} else if n > 0 {
-		backupLogger().Info("Pruned changelog rows", "count", n)
-	}
-	if retention := int64(viper.GetInt("tasks.retention_sec")); retention > 0 {
-		if n, err := s.st.DeleteTerminalTasksBefore(ctx, now-retention); err != nil {
-			backupLogger().Warn("Scheduler: task retention", "error", err.Error())
-		} else if n > 0 {
-			backupLogger().Info("Reaped terminal tasks", "count", n)
-		}
 	}
 }
 

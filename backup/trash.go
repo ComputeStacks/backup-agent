@@ -23,6 +23,12 @@ func Trash(ctx context.Context, st *store.Store, task store.Task, projectEvent *
 		return err
 	}
 	repo.StopContainer()
+	// Drop the observed-state projection row. Log-and-continue: the borg bytes are
+	// already gone, so a projection-cleanup miss must NOT fail an otherwise-successful
+	// teardown (a false failure would trigger the DELETE-path retry).
+	if err := st.DeleteRepository(ctx, task.Volume); err != nil {
+		backupLogger().Warn("Trash: failed to delete repository projection row", "volume", task.Volume, "error", err.Error())
+	}
 	backupLogger().Info("Trashed volume repository", "volume", task.Volume)
 	return nil
 }

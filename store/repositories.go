@@ -87,3 +87,27 @@ func (s *Store) GetRepository(ctx context.Context, name string) (Repository, boo
 		return r, true, nil
 	}
 }
+
+// DeleteRepository removes a repository's observed-state row and appends a delete
+// changelog row (entity_type "repository"), so the controller's projection drops
+// the dead repo after a teardown. Deleting an absent repository is a no-op.
+func (s *Store) DeleteRepository(ctx context.Context, name string) error {
+	if name == "" {
+		return errors.New("store: DeleteRepository requires name")
+	}
+	now := time.Now().Unix()
+	return s.withControlTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `DELETE FROM repositories WHERE name = ?`, name)
+		if err != nil {
+			return fmt.Errorf("store: delete repository %q: %w", name, err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("store: repository %q rows affected: %w", name, err)
+		}
+		if n == 0 {
+			return nil // absent: no-op, not changelogged
+		}
+		return appendChangelogTx(ctx, tx, "repository", name, "", "delete", nil, now)
+	})
+}

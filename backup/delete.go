@@ -20,8 +20,12 @@ func DeleteBackup(ctx context.Context, st *store.Store, task store.Task, project
 		return err
 	}
 	if !found {
-		backupLogger().Info("Missing volume", "function", "DeleteBackup()", "volume", task.Volume)
-		return nil
+		// n1: a controller-POSTed delete against a stale/unknown volume is a
+		// truthful failure, not a false "completed".
+		backupLogger().Warn("Delete failed: unknown volume", "function", "DeleteBackup()", "volume", task.Volume)
+		projectEvent.EventLog.Status = "failed"
+		projectEvent.PostEventUpdate("agent-delete-unknown-volume", "volume not found")
+		return errors.New("unknown volume: " + task.Volume)
 	}
 
 	vol, err := types.LoadVolume(v.Config)

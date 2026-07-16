@@ -9,6 +9,7 @@ import (
 	"cs-agent/types"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"regexp"
 	"strings"
@@ -122,6 +123,21 @@ func ExportBackup(ctx context.Context, st *store.Store, task store.Task, project
 	pr, pw := io.Pipe()
 	exportErrCh := make(chan *borg.LogMessage, 1)
 	go func() {
+		// n5: recover a panic in the producer so it can't crash the whole agent.
+		// Convert it into a pipe error + a channel message so the parent unblocks
+		// and the task fails cleanly (the enclosing ExportBackup's defer can't
+		// protect a separate goroutine).
+		defer func() {
+			if r := recover(); r != nil {
+				hub := sentry.CurrentHub().Clone()
+				hub.Recover(r)
+				hub.Flush(2 * time.Second)
+				msg := fmt.Sprintf("export producer panicked: %v", r)
+				backupLogger().Error("export producer panicked", "archive", task.Archive, "panic", msg)
+				pw.CloseWithError(errors.New(msg))
+				exportErrCh <- &borg.LogMessage{Message: msg}
+			}
+		}()
 		lg := archive.ExportTar(ctx, pw)
 		if lg != nil {
 			// Make the uploader's Read fail so it can't Complete a truncated tar.

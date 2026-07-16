@@ -61,6 +61,8 @@ func main() {
 	// In-process coordination components (all read/write control.db).
 	dispatcher := job.NewDispatcher(st)
 	fwReconciler := firewall.NewReconciler(st)
+	// control.db retention runs unconditionally (independent of backups.enabled).
+	housekeeper := backup.NewHousekeeper(st)
 	var scheduler *backup.Scheduler
 	if viper.GetBool("backups.enabled") {
 		scheduler = backup.NewScheduler(st, dispatcher.Signal)
@@ -87,6 +89,8 @@ func main() {
 	dispatcher.Start(ctx, &wg) // registers its own worker/loop wg counts
 	wg.Add(1)
 	go func() { defer wg.Done(); fwReconciler.Run(ctx) }()
+	wg.Add(1)
+	go func() { defer wg.Done(); housekeeper.Run(ctx) }()
 	if scheduler != nil {
 		wg.Add(1)
 		go func() { defer wg.Done(); scheduler.Run(ctx) }()

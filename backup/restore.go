@@ -25,7 +25,11 @@ func Restore(ctx context.Context, st *store.Store, task store.Task, projectEvent
 		return destVolErr
 	}
 	if !found {
-		backupLogger().Warn("Skipping restore job for unknown destination volume", "volume", task.Volume, "source_volume", params.SourceVolume)
+		// n1: a controller-POSTed restore against a stale/unknown target is a
+		// truthful failure, not a false "completed".
+		backupLogger().Warn("Restore failed: unknown destination volume", "volume", task.Volume, "source_volume", params.SourceVolume)
+		projectEvent.EventLog.Status = "failed"
+		projectEvent.PostEventUpdate("agent-restore-unknown-dest", "destination volume not found")
 		return nil
 	}
 	srcData, found, err := st.GetVolume(ctx, params.SourceVolume)
@@ -34,7 +38,9 @@ func Restore(ctx context.Context, st *store.Store, task store.Task, projectEvent
 		return err
 	}
 	if !found {
-		backupLogger().Warn("Skipping restore job for unknown volume", "volume", task.Volume, "source_volume", params.SourceVolume)
+		backupLogger().Warn("Restore failed: unknown source volume", "volume", task.Volume, "source_volume", params.SourceVolume)
+		projectEvent.EventLog.Status = "failed"
+		projectEvent.PostEventUpdate("agent-restore-unknown-src", "source volume not found")
 		return nil
 	}
 	backupLogger().Info("Performing volume restore", "volume", task.Volume, "source_volume", params.SourceVolume)
