@@ -247,8 +247,9 @@ func (s *Scheduler) reconcile(ctx context.Context) {
 			// lingering trash:true row (the controller hasn't DELETEd it yet) must
 			// NOT re-run a failed teardown every tick — only an explicit controller
 			// re-DELETE retries. EnqueueTeardown reads before writing, so a
-			// pending/running/completed/failed row is a cheap no-op (no write tx,
-			// no dispatcher poke).
+			// pending/running/completed/failed row is a no-op that writes no rows/
+			// changelog and doesn't poke the dispatcher (it still opens a short
+			// IMMEDIATE tx for the read — fine on a single-node control.db).
 			enq, err := s.st.EnqueueTeardown(ctx, store.Task{
 				ID:        "volume.trash:" + vol.Name,
 				Name:      "volume.trash",

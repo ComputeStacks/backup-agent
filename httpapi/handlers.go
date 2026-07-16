@@ -529,7 +529,8 @@ func (s *Server) handleAdminFirewallDelete(w http.ResponseWriter, r *http.Reques
 }
 
 // volumePeek pulls the owning node out of a volume config body so the store can
-// index it (ListVolumesByNode) without interpreting the rest of the blob.
+// record it as a label (cosmetic in v3.0.0 — the DB is the node scope) without
+// interpreting the rest of the blob.
 type volumePeek struct {
 	Node string `json:"node"`
 }

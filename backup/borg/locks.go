@@ -36,9 +36,10 @@ func repoLock(name string) *sync.Mutex {
 // wait would risk missing a scheduled backup.
 //
 // The lock is process-local. It is sufficient only because every repository is
-// owned by exactly one node (enforced by the vol.Node == hostname guards in the
-// backup package). If a volume could ever be served by two nodes at once this
-// provides no protection and a repository-level guard would be required.
+// owned by exactly one node (each node's control.db holds only its own volumes —
+// the controller writes each node's desired state to that node's endpoint). If a
+// volume could ever be served by two nodes at once this provides no protection and
+// a repository-level guard would be required.
 func AcquireRepoLock(name string) func() {
 	m := repoLock(name)
 	m.Lock()
