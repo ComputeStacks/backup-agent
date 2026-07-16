@@ -6,14 +6,12 @@ import (
 	"cs-agent/store"
 	"cs-agent/types"
 	"errors"
-	"os"
 	"strings"
 
 	"github.com/getsentry/sentry-go"
 )
 
 func DeleteBackup(ctx context.Context, st *store.Store, task store.Task, projectEvent *progress) error {
-	hostname, _ := os.Hostname()
 	params := parseParams(task)
 
 	v, found, err := st.GetVolume(ctx, task.Volume)
@@ -31,11 +29,6 @@ func DeleteBackup(ctx context.Context, st *store.Store, task store.Task, project
 		backupLogger().Warn("Fatal error parsing volume", "volume", task.Volume, "error", err.Error())
 		sentry.CaptureException(err)
 		return err
-	}
-
-	if vol.Node != hostname {
-		backupLogger().Info("Skipping backup deletion", "function", "DeleteBackup()", "error", "Not assigned to me.", "assignedTo", vol.Node)
-		return nil
 	}
 
 	repo, findRepoErr := borg.FindRepository(st, &types.Volume{Name: task.Volume}, &types.Volume{Name: params.SourceVolume})

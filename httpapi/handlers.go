@@ -516,11 +516,11 @@ func (s *Server) handleAdminFirewallPut(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleAdminFirewallDelete removes a node's rule set (idempotent no-op if
-// absent). The firewall-populated sentinel stays latched.
+// handleAdminFirewallDelete clears this node's rule set (idempotent no-op if
+// absent). The firewall-populated sentinel stays latched. The {host} path segment
+// is a cosmetic label — this node's control.db holds only its own rules.
 func (s *Server) handleAdminFirewallDelete(w http.ResponseWriter, r *http.Request, _ scope) {
-	node := r.PathValue("host")
-	if err := s.store.DeleteFirewallRules(r.Context(), node); err != nil {
+	if err := s.store.DeleteFirewallRules(r.Context()); err != nil {
 		s.storeError(w, err, "delete firewall_rules")
 		return
 	}

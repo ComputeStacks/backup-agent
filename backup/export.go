@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -64,8 +63,6 @@ var objectKeyUnsafe = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
 func ExportBackup(ctx context.Context, st *store.Store, task store.Task, projectEvent *progress) error {
 	// No handler-level sentry.Recover(): let a panic reach the worker terminal
 	// guard so a crashed export is FAILED (never a false "completed").
-	hostname, _ := os.Hostname()
-
 	v, found, err := st.GetVolume(ctx, task.Volume)
 	if err != nil {
 		backupLogger().Warn("Export: error loading volume from store", "volume", task.Volume, "error", err.Error())
@@ -80,9 +77,6 @@ func ExportBackup(ctx context.Context, st *store.Store, task store.Task, project
 		backupLogger().Warn("Export: error parsing volume", "volume", task.Volume, "error", err.Error())
 		sentry.CaptureException(err)
 		return err
-	}
-	if vol.Node != hostname {
-		return failExport(projectEvent, "volume is not assigned to this node")
 	}
 
 	params := parseParams(task)

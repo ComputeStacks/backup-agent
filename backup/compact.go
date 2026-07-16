@@ -13,10 +13,9 @@ import (
 	"github.com/spf13/viper"
 )
 
-// compact reclaims space freed by prune/delete for every repository this node
-// owns. It reads volume desired-state from control.db, filters to
-// vol.Backup && vol.Node == hostname, and runs borg compact under the per-repo
-// lock so it never overlaps an export of the same repo.
+// compact reclaims space freed by prune/delete for every backup-enabled volume in
+// this node's control.db. It runs borg compact under the per-repo lock so it never
+// overlaps an export of the same repo. (hostname is used only for the jitter seed.)
 func compact(ctx context.Context, st *store.Store) {
 	defer sentry.Recover()
 	hostname, _ := os.Hostname()
@@ -32,7 +31,7 @@ func compact(ctx context.Context, st *store.Store) {
 		}
 	}
 
-	vols, err := st.ListVolumesByNode(ctx, hostname)
+	vols, err := st.ListVolumes(ctx)
 	if err != nil {
 		backupLogger().Warn("Compact error listing volumes", "error", err.Error())
 		sentry.CaptureException(err)
@@ -48,7 +47,7 @@ func compact(ctx context.Context, st *store.Store) {
 			backupLogger().Warn("Compact: error parsing volume", "volume", sv.Name, "error", err.Error())
 			continue
 		}
-		if vol.Backup && vol.Node == hostname {
+		if vol.Backup {
 			// Scoped closure so the lock releases each iteration (and on panic),
 			// and so one repo blocked behind an in-flight export doesn't stall
 			// the rest of the sweep.

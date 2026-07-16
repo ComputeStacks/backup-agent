@@ -20,9 +20,7 @@ func testStore(t *testing.T) *store.Store {
 
 func newTestDispatcher(t *testing.T) *Dispatcher {
 	t.Helper()
-	d := NewDispatcher(testStore(t))
-	d.hostname = "test-node"
-	return d
+	return NewDispatcher(testStore(t))
 }
 
 // TestDispatcher_DrainClaimsOnce proves the load-bearing guarantee: drain claims a
@@ -97,10 +95,10 @@ func TestDispatcher_BootReconcileFailsRunning(t *testing.T) {
 		}
 	}
 	d.bootReconcile(ctx)
-	if running, _ := d.st.ListRunningTasks(ctx, "test-node"); len(running) != 0 {
+	if running, _ := d.st.ListRunningTasks(ctx); len(running) != 0 {
 		t.Fatalf("running after boot reconcile = %d, want 0", len(running))
 	}
-	if pending, _ := d.st.ListPendingTasks(ctx, "test-node"); len(pending) != 0 {
+	if pending, _ := d.st.ListPendingTasks(ctx); len(pending) != 0 {
 		t.Fatalf("pending after boot reconcile = %d, want 0 (nothing auto-replayed)", len(pending))
 	}
 	tk, _, _ := d.st.GetTask(ctx, "volume.restore")

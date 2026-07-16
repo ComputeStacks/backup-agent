@@ -195,18 +195,19 @@ func TestListRunningTasks(t *testing.T) {
 	if _, err := s.ClaimTask(ctx, "r2"); err != nil {
 		t.Fatal(err)
 	}
-	// Different node, running — must not appear for node-a.
+	// A different node label is still returned: the DB is the node scope, so
+	// ListRunningTasks does not filter by node.
 	if _, err := s.CreateTask(ctx, Task{ID: "x1", Name: "volume.backup", Node: "node-b"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.ClaimTask(ctx, "x1"); err != nil {
 		t.Fatal(err)
 	}
-	running, err := s.ListRunningTasks(ctx, "node-a")
+	running, err := s.ListRunningTasks(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(running) != 2 {
-		t.Fatalf("running = %d, want 2", len(running))
+	if len(running) != 3 {
+		t.Fatalf("running = %d, want 3 (all running regardless of node label)", len(running))
 	}
 }

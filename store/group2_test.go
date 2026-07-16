@@ -147,19 +147,21 @@ func TestListPendingTasks(t *testing.T) {
 	if err := s.UpdateTaskStatus(ctx, "a3", TaskRunning, nil); err != nil { // no longer pending
 		t.Fatal(err)
 	}
+	// A task with a different node label is still returned: this node's control.db
+	// is the node scope, so ListPendingTasks does not filter by node.
 	if _, err := s.CreateTask(ctx, Task{ID: "b1", Name: "volume.backup", Node: "node-b"}); err != nil {
 		t.Fatal(err)
 	}
-	pending, err := s.ListPendingTasks(ctx, "node-a")
+	pending, err := s.ListPendingTasks(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pending) != 2 {
-		t.Fatalf("pending = %d, want 2", len(pending))
+	if len(pending) != 3 {
+		t.Fatalf("pending = %d, want 3 (all pending regardless of node label)", len(pending))
 	}
 	for _, p := range pending {
-		if p.Node != "node-a" || p.Status != TaskPending {
-			t.Fatalf("unexpected pending task: %+v", p)
+		if p.Status != TaskPending {
+			t.Fatalf("non-pending task returned: %+v", p)
 		}
 	}
 }
@@ -191,8 +193,8 @@ func TestPutVolume_ChangelogAndSentinel(t *testing.T) {
 	if et != "volume" || id != "vol-1" || op != "upsert" {
 		t.Fatalf("changelog = %s %s %s", et, id, op)
 	}
-	if vols, _ := s.ListVolumesByNode(ctx, "node-a"); len(vols) != 1 {
-		t.Fatalf("ListVolumesByNode = %d, want 1", len(vols))
+	if vols, _ := s.ListVolumes(ctx); len(vols) != 1 {
+		t.Fatalf("ListVolumes = %d, want 1", len(vols))
 	}
 
 	if err := s.DeleteVolume(ctx, "vol-1", "proj-1"); err != nil {
@@ -215,7 +217,7 @@ func TestPutFirewallRules_ChangelogAndSentinel(t *testing.T) {
 	if err := s.PutFirewallRules(ctx, "node-a", rules); err != nil {
 		t.Fatalf("PutFirewallRules: %v", err)
 	}
-	fr, found, err := s.GetFirewallRules(ctx, "node-a")
+	fr, found, err := s.GetFirewallRules(ctx)
 	if err != nil || !found {
 		t.Fatalf("GetFirewallRules: found=%v err=%v", found, err)
 	}
@@ -236,7 +238,7 @@ func TestPutFirewallRules_ChangelogAndSentinel(t *testing.T) {
 	if err := s.PutFirewallRules(ctx, "node-a", json.RawMessage(`{"rules":[]}`)); err != nil {
 		t.Fatalf("empty rules PUT: %v", err)
 	}
-	if err := s.DeleteFirewallRules(ctx, "node-a"); err != nil {
+	if err := s.DeleteFirewallRules(ctx); err != nil {
 		t.Fatalf("DeleteFirewallRules: %v", err)
 	}
 	if got := countTable(t, s, "firewall_rules"); got != 0 {
@@ -334,7 +336,7 @@ func TestDelete_ChangelogShapeAndAbsentNoop(t *testing.T) {
 	if err := s.DeleteVolume(ctx, "nope", "p"); err != nil {
 		t.Fatalf("delete absent volume: %v", err)
 	}
-	if err := s.DeleteFirewallRules(ctx, "nope"); err != nil {
+	if err := s.DeleteFirewallRules(ctx); err != nil {
 		t.Fatalf("delete absent firewall: %v", err)
 	}
 	if got := countTable(t, s, "changelog"); got != 0 {

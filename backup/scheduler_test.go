@@ -90,7 +90,7 @@ func TestScheduler_Reconcile(t *testing.T) {
 
 func countPendingTrash(t *testing.T, st *store.Store) int {
 	t.Helper()
-	pending, err := st.ListPendingTasks(context.Background(), "test-node")
+	pending, err := st.ListPendingTasks(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestScheduler_FireDue(t *testing.T) {
 	}
 	s.fireDue(ctx)
 
-	pending, _ := st.ListPendingTasks(ctx, "test-node")
+	pending, _ := st.ListPendingTasks(ctx)
 	if len(pending) != 1 || pending[0].Name != "volume.backup" || pending[0].Volume != "v1" {
 		t.Fatalf("fireDue pending tasks: %+v", pending)
 	}

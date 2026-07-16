@@ -6,7 +6,6 @@ import (
 	"cs-agent/containermgr"
 	"cs-agent/store"
 	"cs-agent/types"
-	"os"
 	"strconv"
 	"time"
 
@@ -18,7 +17,6 @@ import (
 func Restore(ctx context.Context, st *store.Store, task store.Task, projectEvent *progress) error {
 	// No handler-level sentry.Recover(): let a panic reach the worker terminal
 	// guard so a crashed restore is FAILED (never a false "completed").
-	hostname, _ := os.Hostname()
 	params := parseParams(task)
 
 	destData, found, destVolErr := st.GetVolume(ctx, task.Volume)
@@ -59,23 +57,6 @@ func Restore(ctx context.Context, st *store.Store, task store.Task, projectEvent
 
 	// Start restore
 	backupLogger().Info("Preparing to restore volume", "volume", task.Volume, "source_volume", params.SourceVolume)
-
-	// Sanity check to ensure we should perform the restore
-	if destVol.Node != hostname {
-		backupLogger().Info("Halting restore job because destination volume is not under my control", "volume", task.Volume, "source_volume", params.SourceVolume)
-		projectEvent.EventLog.Status = "failed"
-		projectEvent.PostEventUpdate("agent-806c0cc330c2ea4d", "Halting restore job because destination volume is not under my control.")
-		return nil
-	}
-
-	if !viper.GetBool("backups.borg.nfs") && !viper.GetBool("backups.borg.ssh.enabled") {
-		if vol.Node != hostname {
-			backupLogger().Info("Halting restore job because source volume is not accessible on host", "volume", task.Volume, "source_volume", params.SourceVolume)
-			projectEvent.EventLog.Status = "failed"
-			projectEvent.PostEventUpdate("agent-bfba3466b03d45e8", "Halting restore job because source volume is not accessible on host.")
-			return nil
-		}
-	}
 
 	if task.Archive == "" {
 		backupLogger().Warn("Error restoring volume, missing archive name", "volume", task.Volume, "source_volume", params.SourceVolume)

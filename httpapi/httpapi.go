@@ -75,7 +75,7 @@ type Store interface {
 	PutVolume(ctx context.Context, v store.Volume) error
 	DeleteVolume(ctx context.Context, name, projectID string) error
 	PutFirewallRules(ctx context.Context, node string, rules json.RawMessage) error
-	DeleteFirewallRules(ctx context.Context, node string) error
+	DeleteFirewallRules(ctx context.Context) error
 }
 
 // Config configures the metadata HTTP server. Populate from viper in main.go.

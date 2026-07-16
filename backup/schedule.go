@@ -236,7 +236,7 @@ func (s *Scheduler) reconcile(ctx context.Context) {
 		return
 	}
 
-	vols, err := s.st.ListVolumesByNode(ctx, s.hostname)
+	vols, err := s.st.ListVolumes(ctx)
 	if err != nil {
 		backupLogger().Warn("Scheduler: list volumes", "error", err.Error())
 		return
@@ -249,9 +249,6 @@ func (s *Scheduler) reconcile(ctx context.Context) {
 		vol, err := types.LoadVolume(sv.Config)
 		if err != nil {
 			backupLogger().Warn("Scheduler: parse volume", "volume", sv.Name, "error", err.Error())
-			continue
-		}
-		if vol.Node != s.hostname {
 			continue
 		}
 		seen[vol.Name] = true

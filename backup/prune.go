@@ -5,19 +5,17 @@ import (
 	"cs-agent/backup/borg"
 	"cs-agent/store"
 	"cs-agent/types"
-	"os"
 
 	"github.com/getsentry/sentry-go"
 )
 
-// prune applies each owned volume's borg retention policy. Reads volume
-// desired-state from control.db; runs under the per-repo lock so it never
-// overlaps compact/export of the same repo.
+// prune applies each backup-enabled volume's borg retention policy. Reads volume
+// desired-state from this node's control.db; runs under the per-repo lock so it
+// never overlaps compact/export of the same repo.
 func prune(ctx context.Context, st *store.Store) {
 	defer sentry.Recover()
-	hostname, _ := os.Hostname()
 
-	vols, err := st.ListVolumesByNode(ctx, hostname)
+	vols, err := st.ListVolumes(ctx)
 	if err != nil {
 		backupLogger().Warn("Prune error listing volumes", "error", err.Error())
 		sentry.CaptureException(err)
@@ -34,7 +32,7 @@ func prune(ctx context.Context, st *store.Store) {
 			sentry.CaptureException(err)
 			continue
 		}
-		if vol.Backup && vol.Node == hostname {
+		if vol.Backup {
 			// Serialize against compact/export of the same repo. Scoped to a
 			// closure so the lock releases each iteration (and on panic).
 			func() {

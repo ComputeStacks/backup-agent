@@ -323,22 +323,24 @@ func (s *Store) GetTask(ctx context.Context, id string) (Task, bool, error) {
 }
 
 // ListPendingTasks returns this node's pending tasks in creation order. It is
-// the dispatcher's boot/backstop drain source.
-func (s *Store) ListPendingTasks(ctx context.Context, node string) ([]Task, error) {
-	return s.listTasksByStatus(ctx, node, TaskPending)
+// the dispatcher's boot/backstop drain source. There is no node filter: this
+// node's control.db holds only this node's tasks (the controller writes each
+// node's desired state to that node's endpoint), so the DB IS the node scope.
+func (s *Store) ListPendingTasks(ctx context.Context) ([]Task, error) {
+	return s.listTasksByStatus(ctx, TaskPending)
 }
 
 // ListRunningTasks returns this node's running tasks in creation order. It is the
 // boot crash-reconcile source: a task left running across a restart is dead work
 // and must be failed (never auto-replayed for destructive kinds).
-func (s *Store) ListRunningTasks(ctx context.Context, node string) ([]Task, error) {
-	return s.listTasksByStatus(ctx, node, TaskRunning)
+func (s *Store) ListRunningTasks(ctx context.Context) ([]Task, error) {
+	return s.listTasksByStatus(ctx, TaskRunning)
 }
 
-func (s *Store) listTasksByStatus(ctx context.Context, node, status string) ([]Task, error) {
+func (s *Store) listTasksByStatus(ctx context.Context, status string) ([]Task, error) {
 	rows, err := s.control.QueryContext(ctx,
-		`SELECT `+taskColumns+` FROM tasks WHERE node = ? AND status = ? ORDER BY created_at, id`,
-		node, status)
+		`SELECT `+taskColumns+` FROM tasks WHERE status = ? ORDER BY created_at, id`,
+		status)
 	if err != nil {
 		return nil, fmt.Errorf("store: list %s tasks: %w", status, err)
 	}

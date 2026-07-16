@@ -5,7 +5,6 @@ import (
 	"cs-agent/log"
 	"cs-agent/store"
 	"encoding/json"
-	"os"
 	"sync"
 	"time"
 
@@ -25,7 +24,6 @@ const backstopInterval = 30 * time.Second
 // the backstop coincide.
 type Dispatcher struct {
 	st            *store.Store
-	hostname      string
 	backupQ       chan store.Task
 	exportQ       chan store.Task
 	signal        chan struct{}
@@ -38,7 +36,6 @@ type Dispatcher struct {
 
 // NewDispatcher builds the dispatcher (unbuffered worker queues sized by config).
 func NewDispatcher(st *store.Store) *Dispatcher {
-	hostname, _ := os.Hostname()
 	backupWorkers := viper.GetInt("queue.numworkers") + 1
 	if backupWorkers < 1 {
 		backupWorkers = 1
@@ -49,7 +46,6 @@ func NewDispatcher(st *store.Store) *Dispatcher {
 	}
 	return &Dispatcher{
 		st:            st,
-		hostname:      hostname,
 		backupQ:       make(chan store.Task),
 		exportQ:       make(chan store.Task),
 		signal:        make(chan struct{}, 1),
@@ -116,7 +112,7 @@ func (d *Dispatcher) loop(ctx context.Context, wg *sync.WaitGroup) {
 // queue can't head-of-line-block an export; backups then send blocking (the
 // workers are the throughput limiter).
 func (d *Dispatcher) drain(ctx context.Context) {
-	pending, err := d.st.ListPendingTasks(ctx, d.hostname)
+	pending, err := d.st.ListPendingTasks(ctx)
 	if err != nil {
 		jobEvent().Warn("dispatch: list pending tasks", "error", err.Error())
 		return
@@ -185,7 +181,7 @@ func (d *Dispatcher) dispatchExport(ctx context.Context, task store.Task) {
 // unbidden, and export must never blindly re-upload; the scheduler re-fires
 // backups on their next slot; the controller re-requests the rest.
 func (d *Dispatcher) bootReconcile(ctx context.Context) {
-	running, err := d.st.ListRunningTasks(ctx, d.hostname)
+	running, err := d.st.ListRunningTasks(ctx)
 	if err != nil {
 		jobEvent().Warn("boot reconcile: list running tasks", "error", err.Error())
 		return

@@ -10,7 +10,6 @@ import (
 	"cs-agent/store"
 	"cs-agent/types"
 	"errors"
-	"os"
 	"time"
 
 	"github.com/getsentry/sentry-go"
@@ -27,8 +26,6 @@ func Perform(ctx context.Context, st *store.Store, task store.Task, projectEvent
 	// NOTE: no handler-level sentry.Recover() here — a panic must propagate to the
 	// worker's terminal guard (job/worker.go) so the task is marked FAILED, not
 	// silently recovered into a false "completed". The guard reports to Sentry.
-	hostname, _ := os.Hostname()
-
 	v, found, err := st.GetVolume(ctx, task.Volume)
 	if err != nil {
 		backupLogger().Warn("Fatal error loading volume from store", "volume", task.Volume, "error", err.Error())
@@ -44,11 +41,6 @@ func Perform(ctx context.Context, st *store.Store, task store.Task, projectEvent
 		backupLogger().Warn("Fatal error loading volume", "volume", task.Volume, "error", err.Error())
 		sentry.CaptureException(err)
 		return err
-	}
-
-	if vol.Node != hostname {
-		backupLogger().Info("Skipping backup job for volume not under my control", "volume", task.Volume)
-		return nil
 	}
 
 	backupLogger().Info("Backing up volume", "volume", task.Volume)

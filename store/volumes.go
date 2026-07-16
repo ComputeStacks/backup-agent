@@ -116,12 +116,13 @@ func (s *Store) DeleteVolume(ctx context.Context, name, projectID string) error 
 	})
 }
 
-// ListVolumesByNode returns all volumes whose node matches. It is the
-// storeScheduleSource / compact / prune volume list (replacing consul.Keys).
-func (s *Store) ListVolumesByNode(ctx context.Context, node string) ([]Volume, error) {
-	rows, err := s.control.QueryContext(ctx, `SELECT `+volumeColumns+` FROM volumes WHERE node = ? ORDER BY name`, node)
+// ListVolumes returns every volume in this node's control.db (the scheduler /
+// compact / prune volume list). There is no node filter: the controller writes
+// only this node's volumes to this node's endpoint, so the DB IS the node scope.
+func (s *Store) ListVolumes(ctx context.Context) ([]Volume, error) {
+	rows, err := s.control.QueryContext(ctx, `SELECT `+volumeColumns+` FROM volumes ORDER BY name`)
 	if err != nil {
-		return nil, fmt.Errorf("store: list volumes by node: %w", err)
+		return nil, fmt.Errorf("store: list volumes: %w", err)
 	}
 	defer rows.Close()
 

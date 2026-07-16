@@ -4,7 +4,6 @@ import (
 	"context"
 	"cs-agent/store"
 	"encoding/json"
-	"os"
 
 	"github.com/getsentry/sentry-go"
 )
@@ -22,18 +21,17 @@ type NatRule struct {
 }
 
 // loadExpectedRules reads this node's published-port desired-state from control.db
-// (firewall_rules keyed by hostname) into NatRules. It is the desired-state source
+// (the singleton firewall_rules row) into NatRules. It is the desired-state source
 // for the native cs_agent nftables renderer (unchanged renderer, store source).
 //
 // Return contract (relied on by Reconcile):
 //   - (rules, nil)  -- rules parsed successfully (may have zero entries).
-//   - (nil,   nil)  -- no firewall_rules row for this node: a legitimate "no
-//     published ports" desired state. Reconcile renders an empty table.
+//   - (nil,   nil)  -- no firewall_rules row: a legitimate "no published ports"
+//     desired state. Reconcile renders an empty table.
 //   - (nil,   err)  -- a load or parse error: Reconcile leaves kernel state
 //     untouched and retries next reconcile.
 func loadExpectedRules(ctx context.Context, st *store.Store) (rules *NatRules, err error) {
-	hostname, _ := os.Hostname()
-	fr, found, err := st.GetFirewallRules(ctx, hostname)
+	fr, found, err := st.GetFirewallRules(ctx)
 	if err != nil {
 		sentry.CaptureException(err)
 		csFirewallLog().Warn("Fatal error loading rules from store", "error", err.Error())
