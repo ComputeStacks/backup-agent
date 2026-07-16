@@ -185,6 +185,12 @@ func Restore(ctx context.Context, st *store.Store, task store.Task, projectEvent
 				if !rollbackRestore(&destVol, projectEvent, repo) {
 					projectEvent.PostEventUpdate("agent-b9f3171f4182ee92", "rollback restore complete successfully.")
 				}
+			} else {
+				// Success: log a concise completion line (symmetric with the borg
+				// layer's "Completed backup"). The controller learns success from the
+				// task's terminal status; this is the operator-facing node-log signal,
+				// which was previously absent on a successful restore.
+				backupLogger().Info("Completed volume restore", "volume", destVol.Name, "source_volume", vol.Name, "archive", archive.Name)
 			}
 		}
 	}
