@@ -32,17 +32,31 @@ func newProgress() *progress {
 	return p
 }
 
-// PostEventUpdate records a step message. Safe for concurrent use (some hooks call
-// it from a goroutine). code is the legacy op code — logged for correlation, not
-// stored in the result.
+// PostEventUpdate records a step message AND logs it at INFO. Safe for concurrent
+// use (some hooks call it from a goroutine). code is the legacy op code — logged
+// for correlation, not stored in the result. Use this for failures/anomalies,
+// where the full borg/hook response belongs in the node log; for verbose SUCCESS
+// output that the controller reads from result_json but that would flood the log,
+// use Record instead.
 func (p *progress) PostEventUpdate(code, msg string) {
+	if p == nil {
+		return
+	}
+	p.Record(msg)
+	backupLogger().Info("task step", "code", code, "msg", msg)
+}
+
+// Record appends a step message to the task result WITHOUT logging it. Use for
+// verbose success output (e.g. borg's per-archive stats) that the controller
+// reads from result_json but that would flood the node log at INFO on every
+// backup. The concise success line is logged separately by the borg layer.
+func (p *progress) Record(msg string) {
 	if p == nil {
 		return
 	}
 	p.mu.Lock()
 	p.lines = append(p.lines, msg)
 	p.mu.Unlock()
-	backupLogger().Info("task step", "code", code, "msg", msg)
 }
 
 // CloseEvent is retained for call-site compatibility; the worker owns finalizing

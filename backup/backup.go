@@ -102,7 +102,11 @@ func Perform(ctx context.Context, st *store.Store, task store.Task, projectEvent
 				postBackup(&vol, projectEvent, repo)
 			}
 		} else {
-			projectEvent.PostEventUpdate("agent-566dd010f637861e", archiveMsg.ToYaml())
+			// Success: keep the full borg archive stats in result_json for the
+			// controller, but don't log the YAML at INFO — the borg layer already
+			// logs a concise "Completed backup" line (archive id + duration). The
+			// full response is only worth logging on failure (see archiveErr above).
+			projectEvent.Record(archiveMsg.ToYaml())
 			postBackup(&vol, projectEvent, repo)
 			backupSucceeded = true
 		}
